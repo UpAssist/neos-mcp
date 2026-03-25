@@ -370,7 +370,32 @@ Hidden content is **not** shown in previews. The API itself can read hidden cont
 
 ## MCP Client
 
-This bridge is designed to work with [neos-mcp-client](https://github.com/UpAssist/neos-mcp-client), a Node.js MCP server that translates MCP tool calls into HTTP requests to this bridge. The client can be installed globally and configured per project via environment variables.
+This bridge is designed to work with [neos-mcp-client](https://github.com/UpAssist/neos-mcp-client), a Node.js MCP server that translates MCP tool calls into HTTP requests to this bridge.
+
+### Claude Code setup
+
+Add a `.mcp.json` file to your project root:
+
+```json
+{
+  "mcpServers": {
+    "neos-local": {
+      "command": "node",
+      "args": ["/path/to/neos-mcp-client/dist/index.js"],
+      "env": {
+        "NEOS_MCP_URL": "http://localhost:8081",
+        "NEOS_MCP_TOKEN": "your-token"
+      }
+    }
+  }
+}
+```
+
+> **Important:** Add `.mcp.json` to `.gitignore` — it contains tokens.
+
+For global configuration (all projects), add the same `mcpServers` block to `~/.claude.json` instead.
+
+See the [neos-mcp-client README](https://github.com/UpAssist/neos-mcp-client) for full setup instructions including Cursor and multi-environment configuration.
 
 ## Typical workflow
 

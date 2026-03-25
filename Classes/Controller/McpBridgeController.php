@@ -194,16 +194,12 @@ class McpBridgeController extends ActionController
     private function collectDocumentNodes(NodeInterface $node, int $depth = 0): array
     {
         $pages = [];
-        $pages[] = [
-            'identifier' => $node->getIdentifier(),
-            'contextPath' => $node->getContextPath(),
-            'path' => $node->getPath(),
-            'nodeType' => $node->getNodeType()->getName(),
-            'name' => $node->getName(),
+        $pages[] = array_merge($this->serializeNode($node), [
             'title' => $node->getProperty('title') ?? $node->getName(),
             'hidden' => $node->isHidden(),
             'depth' => $depth,
-        ];
+            'properties' => $this->serializeNodeProperties($node),
+        ]);
         foreach ($node->getChildNodes('Neos.Neos:Document') as $child) {
             foreach ($this->collectDocumentNodes($child, $depth + 1) as $page) {
                 $pages[] = $page;
@@ -338,9 +334,30 @@ class McpBridgeController extends ActionController
         $this->view->assign('value', [
             'page' => array_merge($this->serializeNode($pageNode), [
                 'title' => $pageNode->getProperty('title') ?? $pageNode->getName(),
+                'properties' => $this->serializeNodeProperties($pageNode),
             ]),
             'contentNodes' => $contentNodes,
         ]);
+    }
+
+    /** @Flow\SkipCsrfProtection */
+    public function getDocumentPropertiesAction(string $nodePath = '', string $workspace = 'mcp'): void
+    {
+        $this->checkAuth();
+        $this->requireWorkspace($workspace);
+        if ($nodePath === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
+        }
+        $context = $this->createContext($workspace);
+        $node = $context->getNode($nodePath);
+        if ($node === null) {
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
+        }
+        $this->view->assign('value', array_merge($this->serializeNode($node), [
+            'title' => $node->getProperty('title') ?? $node->getName(),
+            'hidden' => $node->isHidden(),
+            'properties' => $this->serializeNodeProperties($node),
+        ]));
     }
 
     /** @Flow\SkipCsrfProtection */
