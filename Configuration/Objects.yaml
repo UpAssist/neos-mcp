@@ -1,0 +1,19 @@
+UpAssist\Neos\Mcp\Controller\McpBridgeController:
+  properties:
+    previewTokensCache:
+      object:
+        factoryObjectName: Neos\Flow\Cache\CacheManager
+        factoryMethodName: getCache
+        arguments:
+          1:
+            value: 'UpAssist_Neos_Mcp_PreviewTokens'
+
+UpAssist\Neos\Mcp\Http\Middleware\PreviewTokenMiddleware:
+  properties:
+    previewTokensCache:
+      object:
+        factoryObjectName: Neos\Flow\Cache\CacheManager
+        factoryMethodName: getCache
+        arguments:
+          1:
+            value: 'UpAssist_Neos_Mcp_PreviewTokens'

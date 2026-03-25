@@ -1,0 +1,19 @@
+{
+    "name": "upassist/neos-mcp",
+    "description": "HTTP bridge for AI-assisted Neos CMS content management via MCP",
+    "type": "neos-package",
+    "require": {
+        "neos/neos": "*",
+        "neos/flow": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "UpAssist\\Neos\\Mcp\\": "Classes/"
+        }
+    },
+    "extra": {
+        "neos": {
+            "package-key": "UpAssist.Neos.Mcp"
+        }
+    }
+}

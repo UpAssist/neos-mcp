@@ -1,0 +1,7 @@
+-
+  name: 'MCP Bridge'
+  uriPattern: 'neos/mcp/{@action}'
+  defaults:
+    '@package': 'UpAssist.Neos.Mcp'
+    '@controller': 'McpBridge'
+    '@format': 'json'

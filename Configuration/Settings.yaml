@@ -1,0 +1,33 @@
+UpAssist:
+  Neos:
+    Mcp:
+      apiToken: '%env:NEOS_MCP_BRIDGE_TOKEN%'
+      mcpWorkspaceName: 'mcp'
+      mcpWorkspaceTitle: 'MCP Review'
+      mcpWorkspaceDescription: 'Shared workspace for AI-assisted content changes, pending human review'
+
+Neos:
+  Flow:
+    mvc:
+      routes:
+        'UpAssist.Neos.Mcp':
+          position: 'before Neos.Neos'
+    http:
+      middlewares:
+        'mcpPreviewToken':
+          position: 'before routing'
+          middleware: 'UpAssist\Neos\Mcp\Http\Middleware\PreviewTokenMiddleware'
+    security:
+      authentication:
+        providers:
+          'UpAssist.Neos.Mcp:ApiToken':
+            provider: 'UpAssist\Neos\Mcp\Security\Authentication\Provider\ApiTokenProvider'
+            token: 'Neos\Flow\Security\Authentication\Token\BearerToken'
+            requestPatterns:
+              'UpAssist.Neos.Mcp:McpBridgeController':
+                pattern: 'ControllerObjectName'
+                patternOptions:
+                  controllerObjectNamePattern: 'UpAssist\Neos\Mcp\Controller\.*'
+            providerOptions:
+              authenticateRoles:
+                - 'Neos.Neos:Administrator'
