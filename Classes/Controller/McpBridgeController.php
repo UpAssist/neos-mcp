@@ -586,7 +586,7 @@ class McpBridgeController extends ActionController
             $newNode->moveAfter($sibling);
         }
 
-        $this->emitNodeMutated($newNode, 'New element: ' . $newNode->getNodeType()->getName());
+        $this->emitNodeMutated($newNode, 'New element added');
         $this->persistenceManager->persistAll();
 
         $this->view->assign('value', [
@@ -643,7 +643,7 @@ class McpBridgeController extends ActionController
             $node->moveInto($ref);
         }
 
-        $this->emitNodeMutated($node, 'Element moved: ' . $node->getNodeType()->getName());
+        $this->emitNodeMutated($node, 'Element moved');
         $this->persistenceManager->persistAll();
 
         $this->view->assign('value', [
@@ -700,8 +700,57 @@ class McpBridgeController extends ActionController
             $resolvedValue = strtolower($resolvedValue) === 'true';
         }
 
-        $node->setProperty($property, $resolvedValue);
-        $this->emitNodeMutated($node, "Property '{$property}' changed on " . $node->getNodeType()->getName());
+        // Resolve reference: node identifier (UUID) → NodeInterface
+        if ($propertyType === 'reference' && is_string($resolvedValue) && $resolvedValue !== '') {
+            $referencedNode = $context->getNodeByIdentifier($resolvedValue);
+            if ($referencedNode !== null) {
+                $resolvedValue = $referencedNode;
+            } else {
+                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Referenced node not found: ' . $resolvedValue]));
+            }
+        }
+
+        // Resolve references: JSON array of node identifiers → array of NodeInterface
+        if ($propertyType === 'references') {
+            $identifiers = is_string($resolvedValue) ? json_decode($resolvedValue, true) : $resolvedValue;
+            if (is_array($identifiers)) {
+                $nodes = [];
+                foreach ($identifiers as $identifier) {
+                    $refNode = $context->getNodeByIdentifier($identifier);
+                    if ($refNode !== null) {
+                        $nodes[] = $refNode;
+                    }
+                }
+                $resolvedValue = $nodes;
+            }
+        }
+
+        // Resolve DateTime: parse date string → \DateTime object
+        if ($propertyType === 'DateTime' && is_string($resolvedValue) && $resolvedValue !== '') {
+            try {
+                $resolvedValue = new \DateTime($resolvedValue);
+            } catch (\Exception $e) {
+                $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'Invalid date format: ' . $resolvedValue]));
+            }
+        }
+
+        // Resolve array: JSON string → PHP array
+        if ($propertyType === 'array' && is_string($resolvedValue)) {
+            $decoded = json_decode($resolvedValue, true);
+            if (is_array($decoded)) {
+                $resolvedValue = $decoded;
+            }
+        }
+
+        // System properties (prefixed with _) need dedicated setters
+        if ($property === '_hidden') {
+            $node->setHidden((bool)$resolvedValue);
+        } elseif ($property === '_hiddenInIndex') {
+            $node->setHiddenInIndex((bool)$resolvedValue);
+        } else {
+            $node->setProperty($property, $resolvedValue);
+        }
+        $this->emitNodeMutated($node, "Property '{$property}' changed");
         $this->persistenceManager->persistAll();
 
         $displayValue = $resolvedValue instanceof \Neos\Media\Domain\Model\AssetInterface
@@ -733,7 +782,7 @@ class McpBridgeController extends ActionController
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
 
-        $this->emitNodeMutated($node, 'Element removed: ' . $node->getNodeType()->getName());
+        $this->emitNodeMutated($node, 'Element removed');
         $node->remove();
         $this->persistenceManager->persistAll();
 
