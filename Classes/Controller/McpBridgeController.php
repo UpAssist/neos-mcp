@@ -586,6 +586,7 @@ class McpBridgeController extends ActionController
             $newNode->moveAfter($sibling);
         }
 
+        $this->emitNodeMutated($newNode, 'New element: ' . $newNode->getNodeType()->getName());
         $this->persistenceManager->persistAll();
 
         $this->view->assign('value', [
@@ -642,6 +643,7 @@ class McpBridgeController extends ActionController
             $node->moveInto($ref);
         }
 
+        $this->emitNodeMutated($node, 'Element moved: ' . $node->getNodeType()->getName());
         $this->persistenceManager->persistAll();
 
         $this->view->assign('value', [
@@ -699,6 +701,7 @@ class McpBridgeController extends ActionController
         }
 
         $node->setProperty($property, $resolvedValue);
+        $this->emitNodeMutated($node, "Property '{$property}' changed on " . $node->getNodeType()->getName());
         $this->persistenceManager->persistAll();
 
         $displayValue = $resolvedValue instanceof \Neos\Media\Domain\Model\AssetInterface
@@ -730,6 +733,7 @@ class McpBridgeController extends ActionController
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
 
+        $this->emitNodeMutated($node, 'Element removed: ' . $node->getNodeType()->getName());
         $node->remove();
         $this->persistenceManager->persistAll();
 
@@ -857,5 +861,18 @@ class McpBridgeController extends ActionController
         }
 
         $this->view->assign('value', ['tags' => $result]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Signals
+    // -------------------------------------------------------------------------
+
+    /**
+     * Signal emitted after a content node is mutated via MCP.
+     *
+     * @Flow\Signal
+     */
+    protected function emitNodeMutated(NodeInterface $node, string $changeDescription): void
+    {
     }
 }

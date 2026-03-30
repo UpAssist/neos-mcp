@@ -1,0 +1,60 @@
+'UpAssist.Neos.Mcp:Mixin.ReviewStatus':
+  abstract: true
+  ui:
+    inspector:
+      tabs:
+        review:
+          label: i18n
+          icon: 'fas fa-clipboard-check'
+          position: 50
+      groups:
+        reviewStatus:
+          label: i18n
+          tab: review
+          icon: 'fas fa-clipboard-check'
+          position: 10
+        reviewChangelog:
+          label: i18n
+          tab: review
+          icon: 'fas fa-history'
+          position: 20
+  properties:
+    reviewStatus:
+      type: string
+      defaultValue: 'approved'
+      ui:
+        label: i18n
+        reloadIfChanged: true
+        inspector:
+          group: reviewStatus
+          position: 10
+          editor: 'Neos.Neos/Inspector/Editors/SelectBoxEditor'
+          editorOptions:
+            values:
+              approved:
+                label: i18n
+                icon: 'fas fa-check-circle'
+              needsReview:
+                label: i18n
+                icon: 'fas fa-exclamation-triangle'
+    reviewChangelog:
+      type: string
+      defaultValue: ''
+      ui:
+        label: i18n
+        inspector:
+          group: reviewChangelog
+          position: 10
+          editor: 'Neos.Neos/Inspector/Editors/TextAreaEditor'
+          editorOptions:
+            rows: 15
+    reviewLastChangedAt:
+      type: DateTime
+      ui:
+        label: i18n
+        inspector:
+          group: reviewStatus
+          position: 20
+          editor: 'Neos.Neos/Inspector/Editors/DateTimeEditor'
+          editorOptions:
+            format: 'dd-MM-yyyy HH:mm'

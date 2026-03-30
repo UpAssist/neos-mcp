@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+    <file original="" product-name="UpAssist.Neos.Mcp" source-language="en" datatype="plaintext" target-language="nl">
+        <body>
+            <trans-unit id="tabs.review" approved="yes">
+                <source>Review</source>
+                <target>Review</target>
+            </trans-unit>
+            <trans-unit id="groups.reviewStatus" approved="yes">
+                <source>Review Status</source>
+                <target>Review Status</target>
+            </trans-unit>
+            <trans-unit id="groups.reviewChangelog" approved="yes">
+                <source>Changelog</source>
+                <target>Wijzigingslog</target>
+            </trans-unit>
+            <trans-unit id="properties.reviewStatus" approved="yes">
+                <source>Status</source>
+                <target>Status</target>
+            </trans-unit>
+            <trans-unit id="properties.reviewStatus.selectBoxEditor.values.approved" approved="yes">
+                <source>Approved</source>
+                <target>Goedgekeurd</target>
+            </trans-unit>
+            <trans-unit id="properties.reviewStatus.selectBoxEditor.values.needsReview" approved="yes">
+                <source>Needs Review</source>
+                <target>Te reviewen</target>
+            </trans-unit>
+            <trans-unit id="properties.reviewChangelog" approved="yes">
+                <source>Change Log</source>
+                <target>Wijzigingslog</target>
+            </trans-unit>
+            <trans-unit id="properties.reviewLastChangedAt" approved="yes">
+                <source>Last changed</source>
+                <target>Laatst gewijzigd</target>
+            </trans-unit>
+        </body>
+    </file>
+</xliff>
