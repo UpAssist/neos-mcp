@@ -57,4 +57,4 @@
           position: 20
           editor: 'Neos.Neos/Inspector/Editors/DateTimeEditor'
           editorOptions:
-            format: 'D-M-YYYY HH:mm'
+            format: 'd-m-Y H:i'
