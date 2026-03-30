@@ -176,7 +176,25 @@ class McpBridgeController extends ActionController
                 continue;
             }
             $type = $nodeType->getPropertyType($propertyName);
-            if (str_contains($type, 'Image') || str_contains($type, 'Asset') || str_contains($type, 'Media')) {
+            if ($type === 'references' && is_array($value)) {
+                $refs = [];
+                foreach ($value as $refNode) {
+                    if ($refNode instanceof NodeInterface) {
+                        $refs[] = $refNode->getIdentifier();
+                    } elseif (is_string($refNode)) {
+                        $refs[] = $refNode;
+                    }
+                }
+                $result[$propertyName] = $refs;
+            } elseif ($type === 'reference') {
+                if ($value instanceof NodeInterface) {
+                    $result[$propertyName] = $value->getIdentifier();
+                } elseif (is_string($value)) {
+                    $result[$propertyName] = $value;
+                } else {
+                    $result[$propertyName] = null;
+                }
+            } elseif (str_contains($type, 'Image') || str_contains($type, 'Asset') || str_contains($type, 'Media')) {
                 $result[$propertyName] = [
                     '__type' => 'asset',
                     'identifier' => $this->persistenceManager->getIdentifierByObject($value),
@@ -761,8 +779,6 @@ class McpBridgeController extends ActionController
             'contextPath' => $node->getContextPath(),
             'property' => $property,
             'newValue' => $displayValue,
-            'debug_propertyType' => $propertyType,
-            'debug_resolvedType' => gettype($resolvedValue),
         ]);
     }
 
