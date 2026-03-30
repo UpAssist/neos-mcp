@@ -191,14 +191,14 @@ Lists available node types with their properties.
 
 ### POST /neos/mcp/updateNodeProperty
 
-Updates a single property on an existing node.
+Updates a single property on an existing node. Supports automatic type resolution for asset/image properties and boolean string coercion.
 
 **Parameters:**
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `contextPath` | string | *required* | Node context path (e.g. `/sites/example@mcp`) |
 | `property` | string | *required* | Property name |
-| `value` | string | *required* | New property value |
+| `value` | string | *required* | New property value. For image/asset properties, pass the asset UUID (e.g. `"ce372ab4-cde1-4dc4-b49c-a9b90313df0b"`) — it will be resolved to the actual Asset object automatically. |
 | `workspace` | string | `mcp` | Target workspace |
 
 **Response:**
@@ -206,8 +206,8 @@ Updates a single property on an existing node.
 {
   "success": true,
   "contextPath": "/sites/example@mcp",
-  "property": "metaKeywords",
-  "newValue": "solar, panels"
+  "property": "image",
+  "newValue": "asset,ce372ab4-cde1-4dc4-b49c-a9b90313df0b"
 }
 ```
 
@@ -308,6 +308,56 @@ Generates a time-limited preview URL that renders the site from the workspace wi
 ```
 
 Preview tokens expire after 24 hours. The preview shows the page as rendered from the workspace (including unpublished changes) but does **not** show hidden content.
+
+### GET /neos/mcp/listAssets
+
+Lists assets from the Neos Media Manager with filtering and pagination.
+
+**Parameters:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `mediaType` | string | `image` | Media type prefix filter (e.g. `image`, `video`, `application`). Empty for all. |
+| `tag` | string | | Filter by tag label (exact match) |
+| `limit` | int | `50` | Max results per page |
+| `offset` | int | `0` | Pagination offset |
+
+**Response:**
+```json
+{
+  "assets": [
+    {
+      "identifier": "abc-123",
+      "title": "Solar Panel Photo",
+      "caption": "",
+      "filename": "solar-panel.jpg",
+      "mediaType": "image/jpeg",
+      "fileSize": 245000,
+      "tags": ["hero", "zonnepanelen"],
+      "collections": ["Site Assets"],
+      "lastModified": "2026-03-20T10:00:00+01:00"
+    }
+  ],
+  "total": 42,
+  "limit": 50,
+  "offset": 0,
+  "mediaTypeFilter": "image",
+  "tagFilter": ""
+}
+```
+
+### GET /neos/mcp/listAssetTags
+
+Lists all available tags in the Media Manager.
+
+**Response:**
+```json
+{
+  "tags": [
+    { "identifier": "abc-123", "label": "hero" },
+    { "identifier": "def-456", "label": "zonnepanelen" }
+  ]
+}
+```
 
 ### POST /neos/mcp/publishChanges
 

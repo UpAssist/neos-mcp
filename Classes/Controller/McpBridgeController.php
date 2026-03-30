@@ -15,6 +15,10 @@ use Neos\Flow\Mvc\Controller\ActionController;
 use Neos\Flow\Mvc\View\JsonView;
 use Neos\Flow\Persistence\PersistenceManagerInterface;
 use Neos\Neos\Domain\Repository\SiteRepository;
+use Neos\Media\Domain\Repository\AssetRepository;
+use Neos\Media\Domain\Repository\TagRepository;
+use Neos\Media\Domain\Model\AssetCollection;
+use Neos\Media\Domain\Model\ImageInterface;
 use Neos\Cache\Frontend\StringFrontend;
 
 class McpBridgeController extends ActionController
@@ -58,6 +62,18 @@ class McpBridgeController extends ActionController
      * @var PersistenceManagerInterface
      */
     protected $persistenceManager;
+
+    /**
+     * @Flow\Inject
+     * @var AssetRepository
+     */
+    protected $assetRepository;
+
+    /**
+     * @Flow\Inject
+     * @var TagRepository
+     */
+    protected $tagRepository;
 
     /**
      * @Flow\Inject
@@ -656,14 +672,44 @@ class McpBridgeController extends ActionController
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
 
-        $node->setProperty($property, $value);
+        // Resolve asset references: if the property type is an Image/Asset and the value looks like an asset identifier, look it up
+        $resolvedValue = $value;
+        $nodeType = $node->getNodeType();
+        $propertyType = $nodeType->getPropertyType($property);
+        if ($propertyType !== null && (str_contains($propertyType, 'Image') || str_contains($propertyType, 'Asset'))) {
+            $assetIdentifier = $value;
+            // Support both plain UUID and JSON object format {"__type":"asset","identifier":"uuid"}
+            if (is_string($value) && str_starts_with(trim($value), '{')) {
+                $decoded = json_decode($value, true);
+                if (is_array($decoded) && isset($decoded['identifier'])) {
+                    $assetIdentifier = $decoded['identifier'];
+                }
+            }
+            $asset = $this->assetRepository->findByIdentifier($assetIdentifier);
+            if ($asset !== null) {
+                $resolvedValue = $asset;
+            } else {
+                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Asset not found: ' . $assetIdentifier]));
+            }
+        }
+
+        // Handle boolean values passed as strings
+        if (is_string($resolvedValue) && in_array(strtolower($resolvedValue), ['true', 'false'], true)) {
+            $resolvedValue = strtolower($resolvedValue) === 'true';
+        }
+
+        $node->setProperty($property, $resolvedValue);
         $this->persistenceManager->persistAll();
+
+        $displayValue = $resolvedValue instanceof \Neos\Media\Domain\Model\AssetInterface
+            ? 'asset,' . $this->persistenceManager->getIdentifierByObject($resolvedValue)
+            : $value;
 
         $this->view->assign('value', [
             'success' => true,
             'contextPath' => $node->getContextPath(),
             'property' => $property,
-            'newValue' => $value,
+            'newValue' => $displayValue,
         ]);
     }
 
@@ -714,5 +760,102 @@ class McpBridgeController extends ActionController
             'workspace' => $workspace,
             'targetWorkspace' => 'live',
         ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Assets / Media
+    // -------------------------------------------------------------------------
+
+    /**
+     * List assets from the Neos Media Manager.
+     * Supports filtering by mediaType prefix (e.g. "image") and tag name.
+     * Returns identifier, title, filename, mediaType, fileSize, and tags.
+     *
+     * @Flow\SkipCsrfProtection
+     */
+    public function listAssetsAction(string $mediaType = 'image', string $tag = '', int $limit = 50, int $offset = 0): void
+    {
+        $this->checkAuth();
+
+        $query = $this->assetRepository->createQuery();
+        $constraints = [];
+
+        if ($mediaType !== '') {
+            $constraints[] = $query->like('resource.mediaType', $mediaType . '/%');
+        }
+
+        if (!empty($constraints)) {
+            $query->matching($query->logicalAnd($constraints));
+        }
+
+        $query->setOrderings(['lastModified' => \Neos\Flow\Persistence\QueryInterface::ORDER_DESCENDING]);
+        $query->setLimit($limit);
+        $query->setOffset($offset);
+
+        $assets = $query->execute();
+        $total = $query->count();
+
+        $result = [];
+        foreach ($assets as $asset) {
+            $resource = $asset->getResource();
+            $tags = [];
+            foreach ($asset->getTags() as $assetTag) {
+                $tags[] = $assetTag->getLabel();
+            }
+
+            $collections = [];
+            foreach ($asset->getAssetCollections() as $collection) {
+                $collections[] = $collection->getTitle();
+            }
+
+            $result[] = [
+                'identifier' => $this->persistenceManager->getIdentifierByObject($asset),
+                'title' => $asset->getTitle() ?: '',
+                'caption' => $asset->getCaption() ?: '',
+                'filename' => $resource ? $resource->getFilename() : '',
+                'mediaType' => $resource ? $resource->getMediaType() : '',
+                'fileSize' => $resource ? $resource->getFileSize() : 0,
+                'tags' => $tags,
+                'collections' => $collections,
+                'lastModified' => $asset->getLastModified() ? $asset->getLastModified()->format('c') : null,
+            ];
+        }
+
+        // Filter by tag name if specified (post-query filter since tag is a relation)
+        if ($tag !== '') {
+            $result = array_values(array_filter($result, function ($item) use ($tag) {
+                return in_array($tag, $item['tags'], true);
+            }));
+        }
+
+        $this->view->assign('value', [
+            'assets' => $result,
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+            'mediaTypeFilter' => $mediaType,
+            'tagFilter' => $tag,
+        ]);
+    }
+
+    /**
+     * List all available tags in the Media Manager.
+     *
+     * @Flow\SkipCsrfProtection
+     */
+    public function listAssetTagsAction(): void
+    {
+        $this->checkAuth();
+
+        $tags = $this->tagRepository->findAll();
+        $result = [];
+        foreach ($tags as $tag) {
+            $result[] = [
+                'identifier' => $this->persistenceManager->getIdentifierByObject($tag),
+                'label' => $tag->getLabel(),
+            ];
+        }
+
+        $this->view->assign('value', ['tags' => $result]);
     }
 }
