@@ -700,28 +700,27 @@ class McpBridgeController extends ActionController
             $resolvedValue = strtolower($resolvedValue) === 'true';
         }
 
-        // Resolve reference: node identifier (UUID) → NodeInterface
+        // Resolve reference: store as node identifier string (Neos resolves to NodeInterface on read)
         if ($propertyType === 'reference' && is_string($resolvedValue) && $resolvedValue !== '') {
             $referencedNode = $context->getNodeByIdentifier($resolvedValue);
-            if ($referencedNode !== null) {
-                $resolvedValue = $referencedNode;
-            } else {
+            if ($referencedNode === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Referenced node not found: ' . $resolvedValue]));
             }
+            // Keep as string identifier — Neos stores references as identifier strings
         }
 
-        // Resolve references: JSON array of node identifiers → array of NodeInterface
+        // Resolve references: JSON array of node identifiers → validated array of identifier strings
         if ($propertyType === 'references') {
             $identifiers = is_string($resolvedValue) ? json_decode($resolvedValue, true) : $resolvedValue;
             if (is_array($identifiers)) {
-                $nodes = [];
+                $validated = [];
                 foreach ($identifiers as $identifier) {
                     $refNode = $context->getNodeByIdentifier($identifier);
                     if ($refNode !== null) {
-                        $nodes[] = $refNode;
+                        $validated[] = $identifier;
                     }
                 }
-                $resolvedValue = $nodes;
+                $resolvedValue = $validated;
             }
         }
 
