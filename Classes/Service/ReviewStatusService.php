@@ -29,7 +29,7 @@ class ReviewStatusService
             return;
         }
 
-        if (!$documentNode->getNodeType()->hasProperty('reviewStatus')) {
+        if (!array_key_exists('reviewStatus', $documentNode->getNodeType()->getProperties())) {
             return;
         }
 
