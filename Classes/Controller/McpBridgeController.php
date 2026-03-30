@@ -727,20 +727,31 @@ class McpBridgeController extends ActionController
             // Keep as string identifier — Neos stores references as identifier strings
         }
 
-        // Resolve references: JSON array of node identifiers → validated array of identifier strings
+        // Resolve references: accept JSON array string, comma-separated string, or PHP array of node identifiers
         // Neos stores references as identifier strings in NodeData properties; it resolves to NodeInterface on read
         if ($propertyType === 'references') {
-            $identifiers = is_string($resolvedValue) ? json_decode($resolvedValue, true) : $resolvedValue;
-            if (is_array($identifiers)) {
-                $validated = [];
-                foreach ($identifiers as $identifier) {
-                    $refNode = $context->getNodeByIdentifier($identifier);
-                    if ($refNode !== null) {
-                        $validated[] = $identifier;
-                    }
+            if (is_string($resolvedValue)) {
+                // Try JSON decode first (e.g. '["uuid1","uuid2"]')
+                $decoded = json_decode($resolvedValue, true);
+                if (is_array($decoded)) {
+                    $identifiers = $decoded;
+                } else {
+                    // Fall back to comma-separated (Flow may implode array params to "uuid1,uuid2")
+                    $identifiers = array_filter(array_map('trim', explode(',', $resolvedValue)));
                 }
-                $resolvedValue = array_values($validated);
+            } elseif (is_array($resolvedValue)) {
+                $identifiers = $resolvedValue;
+            } else {
+                $identifiers = [];
             }
+            $validated = [];
+            foreach ($identifiers as $identifier) {
+                $refNode = $context->getNodeByIdentifier($identifier);
+                if ($refNode !== null) {
+                    $validated[] = $identifier;
+                }
+            }
+            $resolvedValue = $validated;
         }
 
         // Resolve DateTime: parse date string → \DateTime object
