@@ -728,6 +728,7 @@ class McpBridgeController extends ActionController
         }
 
         // Resolve references: JSON array of node identifiers → validated array of identifier strings
+        // Neos stores references as identifier strings in NodeData properties; it resolves to NodeInterface on read
         if ($propertyType === 'references') {
             $identifiers = is_string($resolvedValue) ? json_decode($resolvedValue, true) : $resolvedValue;
             if (is_array($identifiers)) {
@@ -735,11 +736,10 @@ class McpBridgeController extends ActionController
                 foreach ($identifiers as $identifier) {
                     $refNode = $context->getNodeByIdentifier($identifier);
                     if ($refNode !== null) {
-                        $validated[] = $refNode;
+                        $validated[] = $identifier;
                     }
                 }
-                $resolvedValue = $validated;
-                error_log('MCP references: passing ' . count($validated) . ' NodeInterface objects for ' . $property);
+                $resolvedValue = array_values($validated);
             }
         }
 
