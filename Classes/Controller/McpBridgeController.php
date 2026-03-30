@@ -735,10 +735,11 @@ class McpBridgeController extends ActionController
                 foreach ($identifiers as $identifier) {
                     $refNode = $context->getNodeByIdentifier($identifier);
                     if ($refNode !== null) {
-                        $validated[] = $identifier;
+                        $validated[] = $refNode;
                     }
                 }
                 $resolvedValue = $validated;
+                error_log('MCP references: passing ' . count($validated) . ' NodeInterface objects for ' . $property);
             }
         }
 
