@@ -761,6 +761,8 @@ class McpBridgeController extends ActionController
             'contextPath' => $node->getContextPath(),
             'property' => $property,
             'newValue' => $displayValue,
+            'debug_propertyType' => $propertyType,
+            'debug_resolvedType' => gettype($resolvedValue),
         ]);
     }
 
