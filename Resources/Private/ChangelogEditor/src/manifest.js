@@ -1,5 +1,6 @@
 import manifest from "@neos-project/neos-ui-extensibility";
 import React from "react";
+import { initReviewIndicator } from "./reviewIndicator";
 
 const PACKAGE = "UpAssist.Neos.Mcp";
 const XLIFF_SOURCE = PACKAGE + ":NodeTypes.Mixin.ReviewStatus";
@@ -119,4 +120,7 @@ manifest(PACKAGE + ":ChangelogEditor", {}, (globalRegistry) => {
     editorsRegistry.set(PACKAGE + "/Inspector/Editors/ChangelogEditor", {
         component: ChangelogEditor,
     });
+
+    // Initialize review status indicators in tree + inspector tab
+    initReviewIndicator();
 });

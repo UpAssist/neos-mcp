@@ -378,6 +378,44 @@ Publishes all pending changes from the workspace to `live`.
 }
 ```
 
+## Review Status (opt-in)
+
+The package includes an optional review workflow that tracks content changes made via MCP and provides visual indicators for editors.
+
+### Enabling
+
+Add the mixin to your Document node types:
+
+```yaml
+'Your.Site:Mixin.Document':
+  superTypes:
+    'UpAssist.Neos.Mcp:Mixin.ReviewStatus': true
+```
+
+### How it works
+
+1. **Automatic change tracking**: When content is modified via MCP, the closest Document node is marked as "needs review" and a changelog entry is created
+2. **Readable changelog**: Property changes are logged with their translated XLIFF label (e.g. "Eigenschap 'Trefwoorden' gewijzigd" instead of "Property 'metaKeywords' changed"). The changelog is displayed in the user's interface language via a custom inspector editor
+3. **Approval clears changelog**: When an editor sets the status to "Approved" in the inspector, the changelog is automatically cleared
+4. **Visual indicators**: Orange dots appear in the document tree and on the Review inspector tab for pages needing review. The dots disappear when the page is approved
+
+### Components
+
+| Component | Purpose |
+|-----------|---------|
+| `Mixin.ReviewStatus` | NodeType mixin adding `reviewStatus`, `reviewChangelog`, `reviewLastChangedAt` properties |
+| `ReviewStatusService` | Listens to `nodeMutated` signals, creates changelog entries; listens to `nodePropertyChanged` to clear changelog on approval |
+| `ReviewStatusNodeInfoAspect` | AOP aspect that injects `reviewStatus` into tree node data for the Neos UI |
+| `ChangelogEditor` (JS) | Custom Neos UI inspector editor that renders changelog entries with i18n-translated labels |
+| `reviewIndicator` (JS) | Neos UI plugin that adds orange dot indicators to tree nodes and the inspector tab |
+
+### Inspector tabs
+
+The Review tab appears in the inspector with:
+- **Status**: Select box (Approved / Needs Review)
+- **Last changed**: DateTime of the last MCP modification
+- **Changelog**: Read-only list of changes since last approval, translated to the user's interface language
+
 ## Architecture
 
 ```

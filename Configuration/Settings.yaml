@@ -13,6 +13,9 @@ Neos:
         javascript:
           'UpAssist.Neos.Mcp:ChangelogEditor':
             resource: '${"resource://UpAssist.Neos.Mcp/Public/JavaScript/ChangelogEditor/Plugin.js"}'
+        stylesheets:
+          'UpAssist.Neos.Mcp:ReviewIndicator':
+            resource: '${"resource://UpAssist.Neos.Mcp/Public/Styles/ReviewIndicator.css"}'
   Flow:
     mvc:
       routes:
