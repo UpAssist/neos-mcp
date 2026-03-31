@@ -7,6 +7,12 @@ UpAssist:
       mcpWorkspaceDescription: 'Shared workspace for AI-assisted content changes, pending human review'
 
 Neos:
+  Neos:
+    Ui:
+      resources:
+        javascript:
+          'UpAssist.Neos.Mcp:ChangelogEditor':
+            resource: '${"resource://UpAssist.Neos.Mcp/Public/JavaScript/ChangelogEditor/Plugin.js"}'
   Flow:
     mvc:
       routes:

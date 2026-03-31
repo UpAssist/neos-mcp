@@ -26,6 +26,21 @@
             <trans-unit id="properties.reviewLastChangedAt">
                 <source>Last changed</source>
             </trans-unit>
+            <trans-unit id="changelog.propertyChanged">
+                <source>Property '{0}' changed</source>
+            </trans-unit>
+            <trans-unit id="changelog.elementAdded">
+                <source>New element added</source>
+            </trans-unit>
+            <trans-unit id="changelog.elementMoved">
+                <source>Element moved</source>
+            </trans-unit>
+            <trans-unit id="changelog.elementRemoved">
+                <source>Element removed</source>
+            </trans-unit>
+            <trans-unit id="changelog.empty">
+                <source>No changes recorded</source>
+            </trans-unit>
         </body>
     </file>
 </xliff>

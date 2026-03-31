@@ -34,6 +34,26 @@
                 <source>Last changed</source>
                 <target>Laatst gewijzigd</target>
             </trans-unit>
+            <trans-unit id="changelog.propertyChanged">
+                <source>Property '{0}' changed</source>
+                <target>Eigenschap '{0}' gewijzigd</target>
+            </trans-unit>
+            <trans-unit id="changelog.elementAdded">
+                <source>New element added</source>
+                <target>Nieuw element toegevoegd</target>
+            </trans-unit>
+            <trans-unit id="changelog.elementMoved">
+                <source>Element moved</source>
+                <target>Element verplaatst</target>
+            </trans-unit>
+            <trans-unit id="changelog.elementRemoved">
+                <source>Element removed</source>
+                <target>Element verwijderd</target>
+            </trans-unit>
+            <trans-unit id="changelog.empty">
+                <source>No changes recorded</source>
+                <target>Geen wijzigingen geregistreerd</target>
+            </trans-unit>
         </body>
     </file>
 </xliff>

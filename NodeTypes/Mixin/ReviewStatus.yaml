@@ -39,15 +39,13 @@
                 icon: 'fas fa-exclamation-triangle'
     reviewChangelog:
       type: string
-      defaultValue: ''
+      defaultValue: '[]'
       ui:
         label: i18n
         inspector:
           group: reviewChangelog
           position: 10
-          editor: 'Neos.Neos/Inspector/Editors/TextAreaEditor'
-          editorOptions:
-            rows: 15
+          editor: 'UpAssist.Neos.Mcp/Inspector/Editors/ChangelogEditor'
     reviewLastChangedAt:
       type: DateTime
       ui:
