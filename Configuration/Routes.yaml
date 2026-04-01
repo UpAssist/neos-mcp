@@ -1,4 +1,12 @@
 -
+  name: 'MCP Entity CRUD'
+  uriPattern: 'neos/mcp/entity/{@action}'
+  defaults:
+    '@package': 'UpAssist.Neos.Mcp'
+    '@controller': 'EntityCrud'
+    '@format': 'json'
+
+-
   name: 'MCP Bridge'
   uriPattern: 'neos/mcp/{@action}'
   defaults:

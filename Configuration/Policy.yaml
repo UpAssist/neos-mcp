@@ -2,9 +2,13 @@ privilegeTargets:
   'Neos\Flow\Security\Authorization\Privilege\Method\MethodPrivilege':
     'UpAssist.Neos.Mcp:McpBridge':
       matcher: 'within(UpAssist\Neos\Mcp\Controller\McpBridgeController) && method(public .*->.*Action())'
+    'UpAssist.Neos.Mcp:EntityCrud':
+      matcher: 'within(UpAssist\Neos\Mcp\Controller\EntityCrudController) && method(public .*->.*Action())'
 
 roles:
   'Neos.Neos:Administrator':
     privileges:
       - privilegeTarget: 'UpAssist.Neos.Mcp:McpBridge'
+        permission: GRANT
+      - privilegeTarget: 'UpAssist.Neos.Mcp:EntityCrud'
         permission: GRANT
