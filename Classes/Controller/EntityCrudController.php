@@ -42,11 +42,13 @@ class EntityCrudController extends ActionController
         return parent::resolveActionMethodName();
     }
 
+    /** @Flow\SkipCsrfProtection */
     public function listEntitiesAction(): void
     {
         $this->view->assign('value', $this->entityCrudService->getEntityConfigurations());
     }
 
+    /** @Flow\SkipCsrfProtection */
     public function listAction(string $entity, string $filter = '', string $filterParams = '{}', int $limit = 50, int $offset = 0): void
     {
         try {
@@ -58,6 +60,7 @@ class EntityCrudController extends ActionController
         }
     }
 
+    /** @Flow\SkipCsrfProtection */
     public function showAction(string $entity, string $identifier): void
     {
         try {
@@ -68,6 +71,7 @@ class EntityCrudController extends ActionController
         }
     }
 
+    /** @Flow\SkipCsrfProtection */
     public function createAction(string $entity, string $properties = '{}'): void
     {
         try {
@@ -81,6 +85,7 @@ class EntityCrudController extends ActionController
         }
     }
 
+    /** @Flow\SkipCsrfProtection */
     public function updateAction(string $entity, string $identifier, string $properties = '{}'): void
     {
         try {
@@ -94,6 +99,7 @@ class EntityCrudController extends ActionController
         }
     }
 
+    /** @Flow\SkipCsrfProtection */
     public function deleteAction(string $entity, string $identifier): void
     {
         try {
@@ -106,6 +112,7 @@ class EntityCrudController extends ActionController
         }
     }
 
+    /** @Flow\SkipCsrfProtection */
     public function executeAction(string $entity, string $action, string $identifier = '', string $params = '{}'): void
     {
         try {

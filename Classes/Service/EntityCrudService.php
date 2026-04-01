@@ -164,7 +164,8 @@ class EntityCrudService
 
         if (isset($config['serviceMethods']['delete']) && isset($config['service'])) {
             $service = $this->resolveService($config);
-            $method = $config['serviceMethods']['delete'];
+            $methodConfig = $config['serviceMethods']['delete'];
+            $method = is_array($methodConfig) ? $methodConfig['method'] : $methodConfig;
             $service->$method($entity);
             $this->persistenceManager->persistAll();
             return ['success' => true];
@@ -433,7 +434,9 @@ class EntityCrudService
     private function delegateToService(array $config, string $operation, ?object $entity, array $properties): array
     {
         $service = $this->resolveService($config);
-        $method = $config['serviceMethods'][$operation];
+        $methodConfig = $config['serviceMethods'][$operation];
+        $method = is_array($methodConfig) ? $methodConfig['method'] : $methodConfig;
+        $parameterMapping = is_array($methodConfig) ? ($methodConfig['parameterMapping'] ?? []) : [];
         $fields = $config['fields'] ?? [];
 
         $args = [];
@@ -449,7 +452,13 @@ class EntityCrudService
             $param = $params[$i];
             $paramName = $param->getName();
 
-            if (array_key_exists($paramName, $properties)) {
+            // Check parameter mapping: maps method param name → property name
+            $propertyName = $parameterMapping[$paramName] ?? $paramName;
+
+            if (array_key_exists($propertyName, $properties)) {
+                $fieldConfig = $fields[$propertyName] ?? ['type' => 'string'];
+                $args[] = $this->deserializeValue($properties[$propertyName], $fieldConfig);
+            } elseif (array_key_exists($paramName, $properties)) {
                 $fieldConfig = $fields[$paramName] ?? ['type' => 'string'];
                 $args[] = $this->deserializeValue($properties[$paramName], $fieldConfig);
             } elseif ($param->isDefaultValueAvailable()) {
@@ -462,11 +471,15 @@ class EntityCrudService
         $result = $service->$method(...$args);
         $this->persistenceManager->persistAll();
 
-        if (is_array($result) && isset($result['notification'])) {
-            $resultEntity = $result['notification'];
-            $serialized = $this->serializeEntity($resultEntity, $config);
-            $serialized['errors'] = $result['errors'] ?? [];
-            return $serialized;
+        // Service methods may return ['entity' => $obj, 'errors' => [...]] or ['notification' => $obj, ...]
+        if (is_array($result)) {
+            foreach ($result as $key => $value) {
+                if (is_object($value) && is_a($value, $config['className'])) {
+                    $serialized = $this->serializeEntity($value, $config);
+                    $serialized['errors'] = $result['errors'] ?? [];
+                    return $serialized;
+                }
+            }
         }
 
         if (is_object($result) && is_a($result, $config['className'])) {

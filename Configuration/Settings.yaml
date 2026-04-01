@@ -29,11 +29,17 @@ Neos:
     security:
       authentication:
         providers:
+          'Neos.Neos:Backend':
+            requestPatterns:
+              'UpAssist.Neos.Mcp:Controllers':
+                pattern: 'ControllerObjectName'
+                patternOptions:
+                  controllerObjectNamePattern: 'UpAssist\Neos\Mcp\Controller\.*'
           'UpAssist.Neos.Mcp:ApiToken':
             provider: 'UpAssist\Neos\Mcp\Security\Authentication\Provider\ApiTokenProvider'
             token: 'Neos\Flow\Security\Authentication\Token\BearerToken'
             requestPatterns:
-              'UpAssist.Neos.Mcp:McpBridgeController':
+              'UpAssist.Neos.Mcp:Controllers':
                 pattern: 'ControllerObjectName'
                 patternOptions:
                   controllerObjectNamePattern: 'UpAssist\Neos\Mcp\Controller\.*'

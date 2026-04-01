@@ -378,6 +378,116 @@ Publishes all pending changes from the workspace to `live`.
 }
 ```
 
+## Entity CRUD (custom database tables)
+
+In addition to Neos content nodes, the bridge can expose any Doctrine entity for CRUD operations via MCP. Packages declare their entities in YAML configuration — no code changes needed in the bridge itself.
+
+### How it works
+
+1. A package adds entity configuration to its `Configuration/Settings.yaml`
+2. The bridge reads the merged config and exposes REST endpoints at `/neos/mcp/entity/`
+3. The MCP client provides generic tools (`neos_entity_discover`, `neos_entity_list`, etc.)
+
+### Configuration
+
+Any package can expose entities by adding to `Settings.yaml`:
+
+```yaml
+UpAssist:
+  Neos:
+    Mcp:
+      entities:
+        notifications:                     # entity key used in API calls
+          label: 'Editor Notifications'
+          className: 'Vendor\Package\Domain\Model\Notification'
+          repository: 'Vendor\Package\Domain\Repository\NotificationRepository'
+          service: 'Vendor\Package\Service\NotificationService'    # optional
+
+          fields:
+            title:
+              type: string
+              label: 'Title'
+              required: true
+            content:
+              type: markdown
+              label: 'Content'
+            publishedAt:
+              type: datetime
+              nullable: true
+            status:
+              type: enum
+              enum: [draft, active, archived]
+
+          filters:
+            active:
+              label: 'Active items'
+              method: 'findActive'
+            byStatus:
+              label: 'Filter by status'
+              method: 'findByFilter'
+              parameters:
+                filter:
+                  type: string
+                  required: true
+
+          actions:
+            publish:
+              label: 'Publish'
+              method: 'publish'
+              serviceMethod: true
+              requiresEntity: true
+
+          serviceMethods:
+            create:
+              method: 'createNotification'
+              parameterMapping:
+                content: 'contentMarkdown'    # maps method param → property name
+            update:
+              method: 'updateNotification'
+              parameterMapping:
+                content: 'contentMarkdown'
+            delete:
+              method: 'delete'
+```
+
+### Supported field types
+
+| Type | PHP → JSON | JSON → PHP |
+| --- | --- | --- |
+| `string` | as-is | trim |
+| `text` | as-is | trim |
+| `markdown` | as-is | trim |
+| `integer` | as-is | `(int)` |
+| `float` | as-is | `(float)` |
+| `boolean` | as-is | parse true/false strings |
+| `datetime` | ISO 8601 (ATOM) | `new \DateTime()` |
+| `reference` | UUID | `findByIdentifier()` |
+| `asset` | `{__type, identifier}` | `AssetRepository->findByIdentifier()` |
+| `enum` | as-is | validated against allowed values |
+| `json` | as-is | `json_decode` if string |
+
+### Entity API endpoints
+
+All endpoints are at `/neos/mcp/entity/` and use Bearer token auth.
+
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `listentities` | GET | Discover all exposed entities with schemas |
+| `list` | POST | List/filter entities |
+| `show` | POST | Get single entity by UUID |
+| `create` | POST | Create new entity |
+| `update` | POST | Update entity properties |
+| `delete` | POST | Delete entity |
+| `execute` | POST | Run named action (publish, archive, etc.) |
+
+### Service delegation
+
+When a `service` and `serviceMethods` are configured, CRUD operations are routed through the service layer instead of raw repository calls. This preserves business logic (validation, markdown rendering, side effects).
+
+Use `parameterMapping` when the service method parameter names differ from the YAML field names.
+
+If no service is configured, the bridge uses repository methods directly (`add`, `update`, `remove`) and applies properties via entity setters.
+
 ## Review Status (opt-in)
 
 The package includes an optional review workflow that tracks content changes made via MCP and provides visual indicators for editors.
