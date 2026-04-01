@@ -1,6 +1,6 @@
 {
   "name": "upassist.neos-mcp",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "HTTP bridge for AI-assisted Neos CMS content management via MCP.",
   "scripts": {
     "release:prerelease": "npx standard-version -t '' -r patch --prerelease && git push --follow-tags",

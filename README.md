@@ -1,42 +1,127 @@
 # UpAssist.Neos.Mcp
 
-HTTP bridge that enables AI tools (via MCP protocol) to read, create, edit, and publish content in Neos CMS. Changes are staged in a dedicated workspace for human review before going live.
+**Let AI assistants manage your Neos CMS content** — safely, with human review before anything goes live.
 
-## Requirements
+This package adds an HTTP bridge to your Neos CMS installation that AI tools like Claude Code and Cursor can connect to via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). The AI can read pages, create and edit content, manage assets, and generate preview links. All changes are staged in a separate workspace so an editor can review before publishing.
 
-- Neos CMS 8.3+
-- PHP 8.1+
+## How it works
 
-## Installation
+```
+AI Assistant (Claude Code, Cursor, etc.)
+    │
+    │  MCP protocol (stdio)
+    │
+neos-mcp-client              ← translates MCP ↔ HTTP
+    │
+    │  HTTP + Bearer token
+    │
+UpAssist.Neos.Mcp bridge     ← this package (runs inside Neos)
+    │
+    │  ContentRepository API
+    │
+Neos CMS (mcp workspace → live)
+```
 
-Since this is a private package, add the VCS repository to your project's `composer.json`:
+There are two components to install:
+
+1. **This package** (`upassist/neos-mcp`) — a Neos Flow package that exposes content operations as a REST API
+2. **The MCP server** ([`@upassist/neos-mcp`](https://github.com/UpAssist/neos-mcp-client)) — a lightweight Node.js process that translates between MCP protocol and the REST API
+
+## Quick start
+
+### 1. Install the Neos package
+
+```bash
+composer require upassist/neos-mcp
+```
+
+### 2. Generate a shared token
+
+The bridge uses a Bearer token to authenticate requests. Generate a secure token and add it to your Neos `.env` file:
+
+```bash
+# Generate a random token
+openssl rand -hex 32
+```
+
+```env
+# .env
+NEOS_MCP_BRIDGE_TOKEN=paste-your-generated-token-here
+```
+
+### 3. Install the MCP server
+
+The MCP server is a small Node.js application that runs locally on the developer's machine. See the [neos-mcp-client README](https://github.com/UpAssist/neos-mcp-client) for detailed installation and configuration instructions per editor.
+
+**Quick version for Claude Code:**
+
+```bash
+npm install -g @upassist/neos-mcp
+```
+
+Add a `.mcp.json` to your Neos project root:
 
 ```json
 {
-  "repositories": {
-    "upassist/neos-mcp": {
-      "type": "git",
-      "url": "git@github.com:UpAssist/neos-mcp.git"
+  "mcpServers": {
+    "neos-local": {
+      "command": "neos-mcp",
+      "env": {
+        "NEOS_MCP_URL": "http://localhost:8081",
+        "NEOS_MCP_TOKEN": "paste-your-generated-token-here"
+      }
     }
   }
 }
 ```
 
-Then install:
+> **Important:** Add `.mcp.json` to `.gitignore` — it contains your token.
 
-```bash
-composer require upassist/neos-mcp:dev-main
-```
+### 4. Try it out
+
+Start your Neos instance, open Claude Code (or Cursor), and ask:
+
+> "Show me the pages on my Neos site"
+
+The AI will call `neos_get_site_context` and show you the site structure. From there you can ask it to edit content, create pages, upload images, and more — all staged for your review.
+
+## Requirements
+
+- Neos CMS 8.3+
+- PHP 8.1+
+- Node.js 18+ (for the MCP server)
 
 ## Configuration
 
-Add the API token to your `.env` file:
+The default settings work out of the box. The only required configuration is the API token in your `.env` file (see step 2 above).
 
-```env
-NEOS_MCP_BRIDGE_TOKEN=your-secret-token-here
+### Workspace
+
+All content changes are written to a dedicated **mcp** workspace (branched from `live`). This workspace is created automatically on first use. Changes remain there until explicitly published — the AI never auto-publishes to live.
+
+### Authentication
+
+Every request to the bridge must include a Bearer token:
+
+```
+Authorization: Bearer <your-token>
 ```
 
-The default settings in `Configuration/Settings.yaml`:
+By default, authenticated requests get **Neos.Neos:Administrator** privileges. To restrict this to Editor privileges, add to your site's `Settings.yaml`:
+
+```yaml
+Neos:
+  Flow:
+    security:
+      authentication:
+        providers:
+          'UpAssist.Neos.Mcp:ApiToken':
+            providerOptions:
+              authenticateRoles:
+                - 'Neos.Neos:Editor'
+```
+
+### Full settings reference
 
 ```yaml
 UpAssist:
@@ -48,360 +133,72 @@ UpAssist:
       mcpWorkspaceDescription: 'Shared workspace for AI-assisted content changes, pending human review'
 ```
 
-### Workspace
+## What the AI can do
 
-All content changes are written to a dedicated **mcp** workspace (branched from `live`). This workspace is created automatically on first use. Changes remain there until explicitly published.
+Once connected, the AI assistant has access to these capabilities:
 
-### Authentication & Security
+### Read content
 
-The bridge uses Bearer token authentication. Every request must include:
+| Tool | Description |
+|------|-------------|
+| `neos_get_site_context` | Get site structure, all node types with properties, and page tree |
+| `neos_list_pages` | List all pages in a workspace |
+| `neos_get_page_content` | Get all content nodes on a specific page |
+| `neos_get_document_properties` | Get page-level properties (title, SEO fields, etc.) |
+| `neos_list_node_types` | List available node types and their properties |
+
+### Create and edit content
+
+| Tool | Description |
+|------|-------------|
+| `neos_update_node_property` | Update a property on an existing node (text, images, metadata) |
+| `neos_create_content_node` | Create a new content element inside a page |
+| `neos_create_document_node` | Create a new page |
+| `neos_move_node` | Move a node to a new position |
+| `neos_delete_node` | Remove a node |
+
+### Manage assets
+
+| Tool | Description |
+|------|-------------|
+| `neos_list_assets` | Browse the Media Manager (filter by type, tag) |
+| `neos_list_asset_tags` | List available asset tags |
+
+### Review and publish
+
+| Tool | Description |
+|------|-------------|
+| `neos_get_preview_url` | Generate a 24-hour preview link (no Neos login needed) |
+| `neos_list_pending_changes` | See what has been changed |
+| `neos_publish_changes` | Publish all changes from workspace to live |
+
+### Typical AI workflow
 
 ```
-Authorization: Bearer <your-token>
+1. neos_get_site_context       → Understand the site
+2. neos_get_page_content       → Read current content
+3. neos_update_node_property   → Make changes
+4. neos_get_preview_url        → Generate preview for human review
+5. (human reviews the preview)
+6. neos_publish_changes        → Go live after confirmation
 ```
 
-When a valid token is provided, the request is authenticated with **Neos.Neos:Administrator** privileges. This is configurable in `Settings.yaml`:
+## Entity CRUD (advanced)
 
-```yaml
-Neos:
-  Flow:
-    security:
-      authentication:
-        providers:
-          'UpAssist.Neos.Mcp:ApiToken':
-            providerOptions:
-              authenticateRoles:
-                - 'Neos.Neos:Editor'  # Use Editor instead of Administrator
-```
+Beyond Neos content nodes, the bridge can also expose custom Doctrine entities for CRUD operations. This is useful for managing data stored in custom database tables (e.g. notifications, form submissions, product data).
 
-## API Endpoints
-
-All endpoints are available under `/neos/mcp/` and accept/return JSON.
-
-### GET /neos/mcp/getSiteContext
-
-Returns full site context: site info, all node types with properties, and the page tree. This is typically the first call an MCP client makes to understand the site structure.
-
-**Response:**
-```json
-{
-  "siteName": "example.com",
-  "siteNodePath": "/sites/example",
-  "mcpWorkspace": "mcp",
-  "nodeTypes": [
-    {
-      "name": "Vendor.Site:Content.Text",
-      "isContent": true,
-      "isDocument": false,
-      "properties": {
-        "text": { "type": "string", "label": "Text" }
-      }
-    }
-  ],
-  "pages": [
-    {
-      "path": "/sites/example",
-      "title": "Home",
-      "nodeType": "Vendor.Site:Document.Home",
-      "hidden": false,
-      "depth": 0
-    }
-  ],
-  "workflowInstructions": "Always write content changes to the \"mcp\" workspace..."
-}
-```
-
-### POST /neos/mcp/setupWorkspace
-
-Creates the MCP workspace if it doesn't exist yet.
-
-**Response:**
-```json
-{
-  "success": true,
-  "workspace": { "name": "mcp", "title": "MCP Review" }
-}
-```
-
-### POST /neos/mcp/listPages
-
-Lists all document nodes (pages) in a workspace.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `workspace` | string | `mcp` | Workspace to read from |
-
-**Response:**
-```json
-{
-  "pages": [
-    {
-      "path": "/sites/example",
-      "title": "Home",
-      "nodeType": "Vendor.Site:Document.Home",
-      "hidden": false,
-      "depth": 0
-    }
-  ]
-}
-```
-
-### POST /neos/mcp/getPageContent
-
-Returns all content nodes for a specific page, including nested content.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `nodePath` | string | *required* | Path to the document node |
-| `workspace` | string | `mcp` | Workspace to read from |
-
-**Response:**
-```json
-{
-  "page": {
-    "identifier": "abc-123",
-    "contextPath": "/sites/example@mcp",
-    "path": "/sites/example",
-    "nodeType": "Vendor.Site:Document.Home",
-    "title": "Home"
-  },
-  "contentNodes": [
-    {
-      "identifier": "def-456",
-      "contextPath": "/sites/example/main/text-1@mcp",
-      "nodeType": "Vendor.Site:Content.Text",
-      "properties": {
-        "text": "<p>Hello world</p>"
-      }
-    }
-  ]
-}
-```
-
-### POST /neos/mcp/listNodeTypes
-
-Lists available node types with their properties.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `filter` | string | `content` | `content`, `document`, or `all` |
-
-### POST /neos/mcp/updateNodeProperty
-
-Updates a single property on an existing node. Supports automatic type resolution for asset/image properties and boolean string coercion.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `contextPath` | string | *required* | Node context path (e.g. `/sites/example@mcp`) |
-| `property` | string | *required* | Property name |
-| `value` | string | *required* | New property value. For image/asset properties, pass the asset UUID (e.g. `"ce372ab4-cde1-4dc4-b49c-a9b90313df0b"`) — it will be resolved to the actual Asset object automatically. |
-| `workspace` | string | `mcp` | Target workspace |
-
-**Response:**
-```json
-{
-  "success": true,
-  "contextPath": "/sites/example@mcp",
-  "property": "image",
-  "newValue": "asset,ce372ab4-cde1-4dc4-b49c-a9b90313df0b"
-}
-```
-
-### POST /neos/mcp/createContentNode
-
-Creates a new content node inside a parent node.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `parentPath` | string | *required* | Path to the parent node |
-| `nodeType` | string | *required* | Fully qualified node type name |
-| `properties` | object | `{}` | Initial property values |
-| `workspace` | string | `mcp` | Target workspace |
-
-### POST /neos/mcp/createDocumentNode
-
-Creates a new document (page) node.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `parentPath` | string | *required* | Path to the parent document node |
-| `nodeType` | string | *required* | Fully qualified node type name |
-| `properties` | object | `{}` | Initial property values |
-| `workspace` | string | `mcp` | Target workspace |
-| `nodeName` | string | auto-generated | URL-safe node name |
-| `insertBefore` | string | | Context path of sibling to insert before |
-| `insertAfter` | string | | Context path of sibling to insert after |
-
-### POST /neos/mcp/moveNode
-
-Moves a node to a new position.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `contextPath` | string | *required* | Node to move |
-| `insertBefore` | string | | Move before this sibling |
-| `insertAfter` | string | | Move after this sibling |
-| `newParentPath` | string | | Move into this parent (as last child) |
-| `workspace` | string | `mcp` | Target workspace |
-
-Provide exactly one of `insertBefore`, `insertAfter`, or `newParentPath`.
-
-### POST /neos/mcp/deleteNode
-
-Marks a node as removed in the workspace.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `contextPath` | string | *required* | Node to delete |
-| `workspace` | string | `mcp` | Target workspace |
-
-### POST /neos/mcp/listPendingChanges
-
-Lists all unpublished changes in a workspace.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `workspace` | string | `mcp` | Workspace to check |
-
-**Response:**
-```json
-{
-  "workspace": "mcp",
-  "count": 2,
-  "pendingChanges": [
-    {
-      "identifier": "abc-123",
-      "contextPath": "/sites/example/main/text-1@mcp",
-      "nodeType": "Vendor.Site:Content.Text",
-      "changeType": "modified"
-    }
-  ]
-}
-```
-
-### POST /neos/mcp/getPreviewUrl
-
-Generates a time-limited preview URL that renders the site from the workspace without requiring a Neos login.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `nodePath` | string | *required* | Path to the document node |
-| `workspace` | string | `mcp` | Workspace to preview |
-
-**Response:**
-```json
-{
-  "previewUrl": "https://example.com/page?_mcpPreview=abc123...",
-  "token": "abc123...",
-  "expiresAt": "2026-03-26T12:00:00+00:00"
-}
-```
-
-Preview tokens expire after 24 hours. The preview shows the page as rendered from the workspace (including unpublished changes) but does **not** show hidden content.
-
-### GET /neos/mcp/listAssets
-
-Lists assets from the Neos Media Manager with filtering and pagination.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `mediaType` | string | `image` | Media type prefix filter (e.g. `image`, `video`, `application`). Empty for all. |
-| `tag` | string | | Filter by tag label (exact match) |
-| `limit` | int | `50` | Max results per page |
-| `offset` | int | `0` | Pagination offset |
-
-**Response:**
-```json
-{
-  "assets": [
-    {
-      "identifier": "abc-123",
-      "title": "Solar Panel Photo",
-      "caption": "",
-      "filename": "solar-panel.jpg",
-      "mediaType": "image/jpeg",
-      "fileSize": 245000,
-      "tags": ["hero", "zonnepanelen"],
-      "collections": ["Site Assets"],
-      "lastModified": "2026-03-20T10:00:00+01:00"
-    }
-  ],
-  "total": 42,
-  "limit": 50,
-  "offset": 0,
-  "mediaTypeFilter": "image",
-  "tagFilter": ""
-}
-```
-
-### GET /neos/mcp/listAssetTags
-
-Lists all available tags in the Media Manager.
-
-**Response:**
-```json
-{
-  "tags": [
-    { "identifier": "abc-123", "label": "hero" },
-    { "identifier": "def-456", "label": "zonnepanelen" }
-  ]
-}
-```
-
-### POST /neos/mcp/publishChanges
-
-Publishes all pending changes from the workspace to `live`.
-
-**Parameters:**
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `workspace` | string | `mcp` | Workspace to publish from |
-
-**Response:**
-```json
-{
-  "success": true,
-  "publishedNodes": 3,
-  "workspace": "mcp",
-  "targetWorkspace": "live"
-}
-```
-
-## Entity CRUD (custom database tables)
-
-In addition to Neos content nodes, the bridge can expose any Doctrine entity for CRUD operations via MCP. Packages declare their entities in YAML configuration — no code changes needed in the bridge itself.
-
-### How it works
-
-1. A package adds entity configuration to its `Configuration/Settings.yaml`
-2. The bridge reads the merged config and exposes REST endpoints at `/neos/mcp/entity/`
-3. The MCP client provides generic tools (`neos_entity_discover`, `neos_entity_list`, etc.)
-
-### Configuration
-
-Any package can expose entities by adding to `Settings.yaml`:
+Packages declare their entities in YAML — no code changes in the bridge itself:
 
 ```yaml
 UpAssist:
   Neos:
     Mcp:
       entities:
-        notifications:                     # entity key used in API calls
+        notifications:
           label: 'Editor Notifications'
           className: 'Vendor\Package\Domain\Model\Notification'
           repository: 'Vendor\Package\Domain\Repository\NotificationRepository'
-          service: 'Vendor\Package\Service\NotificationService'    # optional
+          service: 'Vendor\Package\Service\NotificationService'  # optional
 
           fields:
             title:
@@ -411,12 +208,49 @@ UpAssist:
             content:
               type: markdown
               label: 'Content'
-            publishedAt:
-              type: datetime
-              nullable: true
             status:
               type: enum
               enum: [draft, active, archived]
+```
+
+Once configured, the AI gets access to generic entity tools: `neos_entity_discover`, `neos_entity_list`, `neos_entity_show`, `neos_entity_create`, `neos_entity_update`, `neos_entity_delete`, and `neos_entity_action`.
+
+### Supported field types
+
+| Type | Description |
+|------|-------------|
+| `string`, `text`, `markdown` | Text fields |
+| `integer`, `float` | Numeric fields |
+| `boolean` | Boolean (also accepts string "true"/"false") |
+| `datetime` | ISO 8601 date/time |
+| `reference` | UUID reference to another entity |
+| `asset` | Reference to a Neos asset (by UUID) |
+| `enum` | Validated against a list of allowed values |
+| `json` | JSON data |
+
+### Service delegation
+
+When a `service` and `serviceMethods` are configured, CRUD operations are routed through a service class instead of direct repository calls. This preserves business logic like validation, markdown rendering, and side effects. Use `parameterMapping` when service method parameters differ from field names.
+
+<details>
+<summary>Full entity configuration reference</summary>
+
+```yaml
+UpAssist:
+  Neos:
+    Mcp:
+      entities:
+        myEntity:
+          label: 'My Entity'
+          className: 'Vendor\Package\Domain\Model\MyEntity'
+          repository: 'Vendor\Package\Domain\Repository\MyEntityRepository'
+          service: 'Vendor\Package\Service\MyEntityService'
+
+          fields:
+            title:
+              type: string
+              label: 'Title'
+              required: true
 
           filters:
             active:
@@ -439,58 +273,22 @@ UpAssist:
 
           serviceMethods:
             create:
-              method: 'createNotification'
+              method: 'createEntity'
               parameterMapping:
-                content: 'contentMarkdown'    # maps method param → property name
+                content: 'contentMarkdown'
             update:
-              method: 'updateNotification'
+              method: 'updateEntity'
               parameterMapping:
                 content: 'contentMarkdown'
             delete:
               method: 'delete'
 ```
 
-### Supported field types
-
-| Type | PHP → JSON | JSON → PHP |
-| --- | --- | --- |
-| `string` | as-is | trim |
-| `text` | as-is | trim |
-| `markdown` | as-is | trim |
-| `integer` | as-is | `(int)` |
-| `float` | as-is | `(float)` |
-| `boolean` | as-is | parse true/false strings |
-| `datetime` | ISO 8601 (ATOM) | `new \DateTime()` |
-| `reference` | UUID | `findByIdentifier()` |
-| `asset` | `{__type, identifier}` | `AssetRepository->findByIdentifier()` |
-| `enum` | as-is | validated against allowed values |
-| `json` | as-is | `json_decode` if string |
-
-### Entity API endpoints
-
-All endpoints are at `/neos/mcp/entity/` and use Bearer token auth.
-
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `listentities` | GET | Discover all exposed entities with schemas |
-| `list` | POST | List/filter entities |
-| `show` | POST | Get single entity by UUID |
-| `create` | POST | Create new entity |
-| `update` | POST | Update entity properties |
-| `delete` | POST | Delete entity |
-| `execute` | POST | Run named action (publish, archive, etc.) |
-
-### Service delegation
-
-When a `service` and `serviceMethods` are configured, CRUD operations are routed through the service layer instead of raw repository calls. This preserves business logic (validation, markdown rendering, side effects).
-
-Use `parameterMapping` when the service method parameter names differ from the YAML field names.
-
-If no service is configured, the bridge uses repository methods directly (`add`, `update`, `remove`) and applies properties via entity setters.
+</details>
 
 ## Review Status (opt-in)
 
-The package includes an optional review workflow that tracks content changes made via MCP and provides visual indicators for editors.
+The package includes an optional review workflow that shows editors which pages were modified by AI and what changed.
 
 ### Enabling
 
@@ -502,108 +300,130 @@ Add the mixin to your Document node types:
     'UpAssist.Neos.Mcp:Mixin.ReviewStatus': true
 ```
 
-### How it works
+### What it does
 
-1. **Automatic change tracking**: When content is modified via MCP, the closest Document node is marked as "needs review" and a changelog entry is created
-2. **Readable changelog**: Property changes are logged with their translated XLIFF label (e.g. "Eigenschap 'Trefwoorden' gewijzigd" instead of "Property 'metaKeywords' changed"). The changelog is displayed in the user's interface language via a custom inspector editor
-3. **Approval clears changelog**: When an editor sets the status to "Approved" in the inspector, the changelog is automatically cleared
-4. **Visual indicators**: Orange dots appear in the document tree and on the Review inspector tab for pages needing review. The dots disappear when the page is approved
+- **Automatic change tracking** — When content is modified via MCP, the closest Document node is marked as "needs review" with a changelog of what changed
+- **Visual indicators** — Orange dots appear in the Neos document tree and inspector for pages needing review
+- **Translated changelog** — Property changes show translated labels (e.g. "Property 'Keywords' changed" instead of raw property names)
+- **Approval workflow** — When an editor sets the status to "Approved", the changelog is automatically cleared
 
-### Components
+The Review tab in the inspector shows:
+- **Status**: Approved / Needs Review
+- **Last changed**: When the AI last modified the page
+- **Changelog**: List of changes since last approval
 
-| Component | Purpose |
-|-----------|---------|
-| `Mixin.ReviewStatus` | NodeType mixin adding `reviewStatus`, `reviewChangelog`, `reviewLastChangedAt` properties |
-| `ReviewStatusService` | Listens to `nodeMutated` signals, creates changelog entries; listens to `nodePropertyChanged` to clear changelog on approval |
-| `ReviewStatusNodeInfoAspect` | AOP aspect that injects `reviewStatus` into tree node data for the Neos UI |
-| `ChangelogEditor` (JS) | Custom Neos UI inspector editor that renders changelog entries with i18n-translated labels |
-| `reviewIndicator` (JS) | Neos UI plugin that adds orange dot indicators to tree nodes and the inspector tab |
+## API reference
 
-### Inspector tabs
+<details>
+<summary>Full REST API documentation</summary>
 
-The Review tab appears in the inspector with:
-- **Status**: Select box (Approved / Needs Review)
-- **Last changed**: DateTime of the last MCP modification
-- **Changelog**: Read-only list of changes since last approval, translated to the user's interface language
+All endpoints are available under `/neos/mcp/` and accept/return JSON. Every request requires a `Authorization: Bearer <token>` header.
+
+### GET /neos/mcp/getSiteContext
+
+Returns site info, all node types with properties, and the page tree. Typically the first call an MCP client makes.
+
+### POST /neos/mcp/setupWorkspace
+
+Creates the MCP workspace if it doesn't exist.
+
+### POST /neos/mcp/listPages
+
+List all document nodes. Optional parameter: `workspace` (default: `mcp`).
+
+### POST /neos/mcp/getPageContent
+
+Get all content nodes for a page. Parameters: `nodePath` (required), `workspace` (default: `mcp`).
+
+### POST /neos/mcp/getDocumentProperties
+
+Get document-level properties. Parameters: `nodePath` (required), `workspace` (default: `mcp`).
+
+### POST /neos/mcp/listNodeTypes
+
+List available node types. Parameter: `filter` — `content`, `document`, or `all` (default: `content`).
+
+### POST /neos/mcp/updateNodeProperty
+
+Update a single property on a node. Parameters: `contextPath` (required), `property` (required), `value` (required), `workspace` (default: `mcp`). For image/asset properties, pass the asset UUID — it will be resolved automatically.
+
+### POST /neos/mcp/createContentNode
+
+Create a content node. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`).
+
+### POST /neos/mcp/createDocumentNode
+
+Create a page. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`), `nodeName` (optional), `insertBefore`/`insertAfter` (optional).
+
+### POST /neos/mcp/moveNode
+
+Move a node. Parameters: `contextPath` (required), plus exactly one of: `insertBefore`, `insertAfter`, or `newParentPath`. Optional: `workspace` (default: `mcp`).
+
+### POST /neos/mcp/deleteNode
+
+Remove a node. Parameters: `contextPath` (required), `workspace` (default: `mcp`).
+
+### POST /neos/mcp/listPendingChanges
+
+List unpublished changes. Parameter: `workspace` (default: `mcp`).
+
+### POST /neos/mcp/getPreviewUrl
+
+Generate a 24-hour preview URL. Parameters: `nodePath` (required), `workspace` (default: `mcp`).
+
+### GET /neos/mcp/listAssets
+
+List assets from Media Manager. Parameters: `mediaType` (default: `image`), `tag`, `limit` (default: `50`), `offset` (default: `0`).
+
+### GET /neos/mcp/listAssetTags
+
+List all asset tags.
+
+### POST /neos/mcp/publishChanges
+
+Publish all pending changes to live. Parameter: `workspace` (default: `mcp`).
+
+### Entity endpoints
+
+All at `/neos/mcp/entity/`, using Bearer token auth:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `listentities` | GET | Discover all exposed entities with schemas |
+| `list` | POST | List/filter entities |
+| `show` | POST | Get single entity by UUID |
+| `create` | POST | Create new entity |
+| `update` | POST | Update entity properties |
+| `delete` | POST | Delete entity |
+| `execute` | POST | Run a named action |
+
+</details>
 
 ## Architecture
 
-```
-MCP Client (Claude Code, etc.)
-    │
-    │  MCP protocol (stdio)
-    │
-MCP Server (neos-mcp-client)
-    │
-    │  HTTP + Bearer token
-    │
-UpAssist.Neos.Mcp Bridge  ◄── this package
-    │
-    │  Neos ContentRepository API
-    │
-Neos CMS (mcp workspace → live)
-```
-
-### Components
+<details>
+<summary>Internal components</summary>
 
 | Component | Purpose |
 |-----------|---------|
 | `McpBridgeController` | REST API endpoints for all content operations |
-| `ApiTokenProvider` | Flow security authentication provider (Bearer token → Neos roles) |
-| `PreviewTokenMiddleware` | HTTP middleware that activates workspace preview from `?_mcpPreview=` token |
-| `PreviewTokenService` | Singleton that holds the active preview workspace for the current request |
+| `ApiTokenProvider` | Flow security authentication provider (Bearer token to Neos roles) |
+| `PreviewTokenMiddleware` | HTTP middleware that activates workspace preview from `?_mcpPreview=` tokens |
+| `PreviewTokenService` | Singleton holding the active preview workspace for the current request |
 | `WorkspacePreviewAspect` | AOP aspect that switches ContentRepository context to the preview workspace |
+| `ReviewStatusService` | Tracks MCP changes, creates changelog entries, clears on approval |
+| `ReviewStatusNodeInfoAspect` | Injects review status into Neos UI tree node data |
 
 ### Preview mechanism
 
-When a preview URL is visited:
-
 1. `PreviewTokenMiddleware` reads the `_mcpPreview` query parameter
-2. Validates the token against the cache (token → workspace mapping, 24h TTL)
+2. Validates the token against cache (24h TTL)
 3. Activates the preview workspace via `PreviewTokenService`
 4. `WorkspacePreviewAspect` intercepts `ContextFactory->create()` and switches to the preview workspace
-5. The same aspect fakes `ContentContext->isLive()` so `NodeController::showAction()` renders the page normally
+5. The page renders normally — hidden content is **not** shown in previews
 
-Hidden content is **not** shown in previews. The API itself can read hidden content (for editing purposes).
-
-## MCP Client
-
-This bridge is designed to work with [neos-mcp-client](https://github.com/UpAssist/neos-mcp-client), a Node.js MCP server that translates MCP tool calls into HTTP requests to this bridge.
-
-### Claude Code setup
-
-Add a `.mcp.json` file to your project root:
-
-```json
-{
-  "mcpServers": {
-    "neos-local": {
-      "command": "node",
-      "args": ["/path/to/neos-mcp-client/dist/index.js"],
-      "env": {
-        "NEOS_MCP_URL": "http://localhost:8081",
-        "NEOS_MCP_TOKEN": "your-token"
-      }
-    }
-  }
-}
-```
-
-> **Important:** Add `.mcp.json` to `.gitignore` — it contains tokens.
-
-For global configuration (all projects), add the same `mcpServers` block to `~/.claude.json` instead.
-
-See the [neos-mcp-client README](https://github.com/UpAssist/neos-mcp-client) for full setup instructions including Cursor and multi-environment configuration.
-
-## Typical workflow
-
-1. MCP client calls `getSiteContext` to understand the site
-2. AI reads page content via `getPageContent`
-3. AI makes changes via `updateNodeProperty`, `createContentNode`, etc.
-4. AI generates a preview URL via `getPreviewUrl` for human review
-5. Human reviews the preview and confirms
-6. AI publishes via `publishChanges`
+</details>
 
 ## License
 
-Proprietary
+MIT

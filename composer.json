@@ -2,6 +2,14 @@
     "name": "upassist/neos-mcp",
     "description": "HTTP bridge for AI-assisted Neos CMS content management via MCP",
     "type": "neos-package",
+    "license": "MIT",
+    "homepage": "https://github.com/UpAssist/neos-mcp",
+    "authors": [
+        {
+            "name": "Henjo Hoeksma",
+            "email": "henjo@upassist.com"
+        }
+    ],
     "require": {
         "neos/neos": "*",
         "neos/flow": "*"
