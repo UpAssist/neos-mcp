@@ -104,7 +104,7 @@ class McpBridgeController extends ActionController
         $this->view->assign('value', [
             'apiVersion' => 2,
             'siteName' => $site->getName(),
-            'siteNodeName' => $site->getNodeName(),
+            'siteNodeName' => $site->getNodeName()->value,
             'siteNodeAggregateId' => $siteNode->aggregateId->value,
             'mcpWorkspace' => $this->mcpWorkspaceName,
             'nodeTypes' => $nodeTypes,

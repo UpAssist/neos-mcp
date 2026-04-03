@@ -4,15 +4,6 @@
 
 This package adds an HTTP bridge to your Neos CMS installation that AI tools like Claude Code and Cursor can connect to via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). The AI can read pages, create and edit content, manage assets, and generate preview links. All changes are staged in a separate workspace so an editor can review before publishing.
 
-## Compatibility
-
-| Package version | Neos CMS | PHP   | MCP Server                |
-|----------------|----------|-------|---------------------------|
-| 2.x (`main`)   | 9.0+     | 8.2+  | @upassist/neos-mcp 2.x   |
-| 1.x (`neos-8`) | 8.3+     | 8.1+  | @upassist/neos-mcp 1.x   |
-
-> **Neos 8 users:** Switch to the `neos-8` branch: `composer require upassist/neos-mcp:^1.0`
-
 ## How it works
 
 ```
@@ -96,8 +87,8 @@ The AI will call `neos_get_site_context` and show you the site structure. From t
 
 ## Requirements
 
-- Neos CMS 9.0+ (for Neos 8.3, use `composer require upassist/neos-mcp:^1.0`)
-- PHP 8.2+
+- Neos CMS 8.3+
+- PHP 8.1+
 - Node.js 18+ (for the MCP server)
 
 ## Configuration
@@ -340,45 +331,45 @@ Creates the MCP workspace if it doesn't exist.
 
 List all document nodes. Optional parameter: `workspace` (default: `mcp`).
 
-### GET /neos/mcp/getPageContent
+### POST /neos/mcp/getPageContent
 
-Get all content nodes for a page. Parameters: `nodeAggregateId` (required), `workspace` (default: `mcp`).
+Get all content nodes for a page. Parameters: `nodePath` (required), `workspace` (default: `mcp`).
 
-### GET /neos/mcp/getDocumentProperties
+### POST /neos/mcp/getDocumentProperties
 
-Get document-level properties. Parameters: `nodeAggregateId` (required), `workspace` (default: `mcp`).
+Get document-level properties. Parameters: `nodePath` (required), `workspace` (default: `mcp`).
 
-### GET /neos/mcp/listNodeTypes
+### POST /neos/mcp/listNodeTypes
 
 List available node types. Parameter: `filter` — `content`, `document`, or `all` (default: `content`).
 
 ### POST /neos/mcp/updateNodeProperty
 
-Update a single property on a node. Parameters: `nodeAggregateId` (required), `property` (required), `value` (required), `workspace` (default: `mcp`). For image/asset properties, pass the asset UUID — it will be resolved automatically.
+Update a single property on a node. Parameters: `contextPath` (required), `property` (required), `value` (required), `workspace` (default: `mcp`). For image/asset properties, pass the asset UUID — it will be resolved automatically.
 
 ### POST /neos/mcp/createContentNode
 
-Create a content node. Parameters: `parentNodeAggregateId` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`).
+Create a content node. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`).
 
 ### POST /neos/mcp/createDocumentNode
 
-Create a page. Parameters: `parentNodeAggregateId` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`), `nodeName` (optional), `insertBefore`/`insertAfter` (optional — node aggregate IDs).
+Create a page. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`), `nodeName` (optional), `insertBefore`/`insertAfter` (optional).
 
 ### POST /neos/mcp/moveNode
 
-Move a node. Parameters: `nodeAggregateId` (required), plus exactly one of: `insertBefore`, `insertAfter`, or `newParentId`. Optional: `workspace` (default: `mcp`).
+Move a node. Parameters: `contextPath` (required), plus exactly one of: `insertBefore`, `insertAfter`, or `newParentPath`. Optional: `workspace` (default: `mcp`).
 
 ### POST /neos/mcp/deleteNode
 
-Remove a node. Parameters: `nodeAggregateId` (required), `workspace` (default: `mcp`).
+Remove a node. Parameters: `contextPath` (required), `workspace` (default: `mcp`).
 
-### GET /neos/mcp/listPendingChanges
+### POST /neos/mcp/listPendingChanges
 
 List unpublished changes. Parameter: `workspace` (default: `mcp`).
 
-### GET /neos/mcp/getPreviewUrl
+### POST /neos/mcp/getPreviewUrl
 
-Generate a 24-hour preview URL. Parameters: `nodeAggregateId` (required), `workspace` (default: `mcp`).
+Generate a 24-hour preview URL. Parameters: `nodePath` (required), `workspace` (default: `mcp`).
 
 ### GET /neos/mcp/listAssets
 
@@ -415,36 +406,20 @@ All at `/neos/mcp/entity/`, using Bearer token auth:
 
 | Component | Purpose |
 |-----------|---------|
-| `ContentRepositoryService` | Shared service layer wrapping Neos 9 event-sourced ContentRepository |
 | `McpBridgeController` | REST API endpoints for all content operations |
-| `McpCommandController` | CLI commands (`./flow mcp:*`) for local AI tool access |
 | `ApiTokenProvider` | Flow security authentication provider (Bearer token to Neos roles) |
 | `PreviewTokenMiddleware` | HTTP middleware that activates workspace preview from `?_mcpPreview=` tokens |
 | `PreviewTokenService` | Singleton holding the active preview workspace for the current request |
-| `WorkspacePreviewAspect` | AOP aspect that switches NodeController workspace for preview |
-| `ReviewStatusService` | Tracks MCP changes, creates changelog entries |
-| `ReviewStatusCommandHook` | CR CommandHook that clears changelog on approval |
+| `WorkspacePreviewAspect` | AOP aspect that switches ContentRepository context to the preview workspace |
+| `ReviewStatusService` | Tracks MCP changes, creates changelog entries, clears on approval |
 | `ReviewStatusNodeInfoAspect` | Injects review status into Neos UI tree node data |
-
-### CLI commands
-
-In addition to the HTTP bridge, the package provides Flow CLI commands for local use with AI tools:
-
-```bash
-./flow mcp:siteContext                                    # Site structure + node types
-./flow mcp:listPages --workspace=mcp                      # List all pages
-./flow mcp:getPageContent --nodeAggregateId=<id>           # Get page content
-./flow mcp:createContentNode --parentId=<id> --nodeType=<type>
-./flow mcp:updateNodeProperty --nodeAggregateId=<id> --property=title --value="New Title"
-./flow mcp:publishChanges --workspace=mcp                  # Publish to live
-```
 
 ### Preview mechanism
 
 1. `PreviewTokenMiddleware` reads the `_mcpPreview` query parameter
 2. Validates the token against cache (24h TTL)
 3. Activates the preview workspace via `PreviewTokenService`
-4. `WorkspacePreviewAspect` intercepts `NodeController->showAction()` and switches the NodeAddress to the preview workspace
+4. `WorkspacePreviewAspect` intercepts `ContextFactory->create()` and switches to the preview workspace
 5. The page renders normally — hidden content is **not** shown in previews
 
 </details>

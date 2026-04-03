@@ -51,7 +51,7 @@ class McpCommandController extends CommandController
         $this->outputJson([
             'apiVersion' => 2,
             'siteName' => $site->getName(),
-            'siteNodeName' => $site->getNodeName(),
+            'siteNodeName' => $site->getNodeName()->value,
             'siteNodeAggregateId' => $siteNode->aggregateId->value,
             'mcpWorkspace' => $this->mcpWorkspaceName,
             'nodeTypes' => $nodeTypes,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace UpAssist\Neos\Mcp\Controller;
 
 use Neos\Flow\Annotations as Flow;
+use Neos\Flow\Mvc\ActionRequest;
 use Neos\Flow\Mvc\Controller\ActionController;
 use Neos\Flow\Mvc\View\JsonView;
 use UpAssist\Neos\Mcp\Service\EntityCrudService;
@@ -36,10 +37,10 @@ class EntityCrudController extends ActionController
         }
     }
 
-    protected function resolveActionMethodName(): string
+    protected function resolveActionMethodName(ActionRequest $request): string
     {
         $this->checkAuth();
-        return parent::resolveActionMethodName();
+        return parent::resolveActionMethodName($request);
     }
 
     /** @Flow\SkipCsrfProtection */

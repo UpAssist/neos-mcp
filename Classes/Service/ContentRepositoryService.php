@@ -40,6 +40,8 @@ use Neos\Flow\Persistence\PersistenceManagerInterface;
 use Neos\Media\Domain\Repository\AssetRepository;
 use Neos\Neos\Domain\Model\Site;
 use Neos\Neos\Domain\Model\WorkspaceDescription;
+use Neos\Neos\Domain\Model\WorkspaceRole;
+use Neos\Neos\Domain\Model\WorkspaceRoleAssignment;
 use Neos\Neos\Domain\Model\WorkspaceRoleAssignments;
 use Neos\Neos\Domain\Model\WorkspaceTitle;
 use Neos\Neos\Domain\Repository\SiteRepository;
@@ -194,17 +196,39 @@ class ContentRepositoryService
     public function ensureWorkspace(string $workspaceName, string $title, string $description): void
     {
         $wsName = WorkspaceName::fromString($workspaceName);
+        $crId = $this->getContentRepositoryId();
+
         if ($this->getContentRepository()->findWorkspaceByName($wsName) !== null) {
+            // Workspace exists — ensure role assignments are in place
+            try {
+                $this->workspaceService->assignWorkspaceRole(
+                    $crId, $wsName,
+                    WorkspaceRoleAssignment::createForGroup('Neos.Neos:Administrator', WorkspaceRole::MANAGER)
+                );
+            } catch (\Exception $e) {
+                // Role may already exist
+            }
+            try {
+                $this->workspaceService->assignWorkspaceRole(
+                    $crId, $wsName,
+                    WorkspaceRoleAssignment::createForGroup('Neos.Neos:Editor', WorkspaceRole::COLLABORATOR)
+                );
+            } catch (\Exception $e) {
+                // Role may already exist
+            }
             return;
         }
 
         $this->workspaceService->createSharedWorkspace(
-            $this->getContentRepositoryId(),
+            $crId,
             $wsName,
             new WorkspaceTitle($title),
             new WorkspaceDescription($description),
             WorkspaceName::forLive(),
-            WorkspaceRoleAssignments::createEmpty()
+            WorkspaceRoleAssignments::create(
+                WorkspaceRoleAssignment::createForGroup('Neos.Neos:Administrator', WorkspaceRole::MANAGER),
+                WorkspaceRoleAssignment::createForGroup('Neos.Neos:Editor', WorkspaceRole::COLLABORATOR),
+            )
         );
     }
 
@@ -617,7 +641,7 @@ class ContentRepositoryService
             }
 
             $nodeTypes[] = [
-                'name' => $nodeType->getName(),
+                'name' => $nodeType->name->value,
                 'isContent' => $nodeType->isOfType('Neos.Neos:Content'),
                 'isDocument' => $nodeType->isOfType('Neos.Neos:Document'),
                 'properties' => $properties,
