@@ -1,9 +1,11 @@
 <?php
+
 declare(strict_types=1);
 
 namespace UpAssist\Neos\Mcp\Service;
 
-use Neos\ContentRepository\Domain\Model\NodeInterface;
+use Neos\ContentRepository\Core\Projection\ContentGraph\Node;
+use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 
 /**
@@ -13,8 +15,8 @@ use Neos\Flow\Annotations as Flow;
  * Only acts when the Document node type has a 'reviewStatus' property,
  * i.e. when the site has opted in via the UpAssist.Neos.Mcp:Mixin.ReviewStatus mixin.
  *
- * Changelog entries are stored as JSON with translation keys so the
- * custom inspector editor can render them in the user's interface language.
+ * In Neos 9, nodes are immutable read models. Property changes are applied
+ * via ContentRepository commands (SetNodeProperties).
  *
  * @Flow\Scope("singleton")
  */
@@ -23,16 +25,38 @@ class ReviewStatusService
     private const MAX_CHANGELOG_ENTRIES = 50;
 
     /**
+     * @Flow\Inject
+     * @var ContentRepositoryRegistry
+     */
+    protected $contentRepositoryRegistry;
+
+    /**
+     * @Flow\Inject
+     * @var ContentRepositoryService
+     */
+    protected $crService;
+
+    /**
      * Slot: called when a content node is mutated via MCP.
      */
-    public function handleNodeMutated(NodeInterface $node, string $changeDescription): void
+    public function handleNodeMutated(?Node $node, string $changeDescription): void
     {
-        $documentNode = $this->findClosestDocument($node);
+        if ($node === null) {
+            return;
+        }
+
+        $documentNode = $this->crService->findClosestDocument(
+            $node->aggregateId,
+            $node->workspaceName->value
+        );
+
         if ($documentNode === null) {
             return;
         }
 
-        if (!array_key_exists('reviewStatus', $documentNode->getNodeType()->getProperties())) {
+        $cr = $this->contentRepositoryRegistry->get($node->contentRepositoryId);
+        $nodeType = $cr->getNodeTypeManager()->getNodeType($documentNode->nodeTypeName);
+        if ($nodeType === null || !array_key_exists('reviewStatus', $nodeType->getProperties())) {
             return;
         }
 
@@ -50,46 +74,24 @@ class ReviewStatusService
             $entries = array_slice($entries, 0, self::MAX_CHANGELOG_ENTRIES);
         }
 
-        $documentNode->setProperty('reviewStatus', 'needsReview');
-        $documentNode->setProperty('reviewChangelog', json_encode($entries, JSON_UNESCAPED_UNICODE));
-        $documentNode->setProperty('reviewLastChangedAt', $now);
+        $this->crService->setNodeProperties(
+            $node->workspaceName->value,
+            $documentNode->aggregateId->value,
+            [
+                'reviewStatus' => 'needsReview',
+                'reviewChangelog' => json_encode($entries, JSON_UNESCAPED_UNICODE),
+                'reviewLastChangedAt' => $now,
+            ]
+        );
     }
 
-    /**
-     * Slot: called when any node property changes (including from the Neos inspector).
-     * Clears the changelog when reviewStatus is set to 'approved'.
-     */
-    public function handleReviewStatusChanged(NodeInterface $node, string $propertyName, $oldValue, $newValue): void
-    {
-        if ($propertyName !== 'reviewStatus') {
-            return;
-        }
-
-        if ($newValue !== 'approved') {
-            return;
-        }
-
-        if (!array_key_exists('reviewChangelog', $node->getNodeType()->getProperties())) {
-            return;
-        }
-
-        $currentLog = $node->getProperty('reviewChangelog');
-        if ($currentLog !== null && $currentLog !== '' && $currentLog !== '[]') {
-            $node->setProperty('reviewChangelog', '[]');
-        }
-    }
-
-    /**
-     * Builds a structured changelog entry with a translation key and label ID
-     * so the inspector editor can translate it in the user's interface language.
-     */
-    private function buildChangelogEntry(NodeInterface $node, string $changeDescription, \DateTime $date): array
+    private function buildChangelogEntry(Node $node, string $changeDescription, \DateTime $date): array
     {
         $entry = [
             'date' => $date->format('d-m-Y H:i'),
         ];
 
-        if (preg_match("/Property '([^']+)' changed(?:\\s+on\\s+\\S+)?/", $changeDescription, $matches)) {
+        if (preg_match("/Property '([^']+)' changed/", $changeDescription, $matches)) {
             $propertyName = $matches[1];
             $entry['type'] = 'propertyChanged';
             $entry['propertyName'] = $propertyName;
@@ -108,31 +110,20 @@ class ReviewStatusService
         return $entry;
     }
 
-    /**
-     * Gets the i18n label ID for a property from its NodeType configuration.
-     * Returns null if no translatable label is configured.
-     */
-    private function resolvePropertyLabelId(NodeInterface $node, string $propertyName): ?string
+    private function resolvePropertyLabelId(Node $node, string $propertyName): ?string
     {
-        $nodeType = $node->getNodeType();
+        $cr = $this->contentRepositoryRegistry->get($node->contentRepositoryId);
+        $nodeType = $cr->getNodeTypeManager()->getNodeType($node->nodeTypeName);
+        if ($nodeType === null) {
+            return null;
+        }
+
         $labelId = $nodeType->getConfiguration('properties.' . $propertyName . '.ui.label');
 
         if ($labelId !== null && is_string($labelId) && str_contains($labelId, ':')) {
             return $labelId;
         }
 
-        return null;
-    }
-
-    private function findClosestDocument(NodeInterface $node): ?NodeInterface
-    {
-        $current = $node;
-        while ($current !== null) {
-            if ($current->getNodeType()->isOfType('Neos.Neos:Document')) {
-                return $current;
-            }
-            $current = $current->getParent();
-        }
         return null;
     }
 }

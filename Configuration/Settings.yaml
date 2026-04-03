@@ -7,6 +7,12 @@ UpAssist:
       mcpWorkspaceDescription: 'Shared workspace for AI-assisted content changes, pending human review'
 
 Neos:
+  ContentRepositoryRegistry:
+    contentRepositories:
+      default:
+        commandHooks:
+          'UpAssist.Neos.Mcp:ReviewStatus':
+            factoryObjectName: 'UpAssist\Neos\Mcp\CommandHook\ReviewStatusCommandHookFactory'
   Neos:
     Ui:
       resources:

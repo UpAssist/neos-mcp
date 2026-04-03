@@ -1,25 +1,18 @@
 <?php
+
 declare(strict_types=1);
 
 namespace UpAssist\Neos\Mcp\Controller;
 
-use Neos\ContentRepository\Domain\Model\NodeInterface;
-use Neos\ContentRepository\Domain\Model\NodeTemplate;
-use Neos\ContentRepository\Domain\Model\Workspace;
-use Neos\ContentRepository\Domain\Repository\WorkspaceRepository;
-use Neos\ContentRepository\Domain\Service\ContextFactoryInterface;
-use Neos\ContentRepository\Domain\Service\NodeTypeManager;
-use Neos\ContentRepository\Domain\Service\PublishingService;
+use Neos\ContentRepository\Core\Projection\ContentGraph\Node;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Mvc\Controller\ActionController;
 use Neos\Flow\Mvc\View\JsonView;
 use Neos\Flow\Persistence\PersistenceManagerInterface;
-use Neos\Neos\Domain\Repository\SiteRepository;
+use Neos\Cache\Frontend\StringFrontend;
 use Neos\Media\Domain\Repository\AssetRepository;
 use Neos\Media\Domain\Repository\TagRepository;
-use Neos\Media\Domain\Model\AssetCollection;
-use Neos\Media\Domain\Model\ImageInterface;
-use Neos\Cache\Frontend\StringFrontend;
+use UpAssist\Neos\Mcp\Service\ContentRepositoryService;
 
 class McpBridgeController extends ActionController
 {
@@ -29,33 +22,9 @@ class McpBridgeController extends ActionController
 
     /**
      * @Flow\Inject
-     * @var ContextFactoryInterface
+     * @var ContentRepositoryService
      */
-    protected $contextFactory;
-
-    /**
-     * @Flow\Inject
-     * @var NodeTypeManager
-     */
-    protected $nodeTypeManager;
-
-    /**
-     * @Flow\Inject
-     * @var PublishingService
-     */
-    protected $publishingService;
-
-    /**
-     * @Flow\Inject
-     * @var WorkspaceRepository
-     */
-    protected $workspaceRepository;
-
-    /**
-     * @Flow\Inject
-     * @var SiteRepository
-     */
-    protected $siteRepository;
+    protected $crService;
 
     /**
      * @Flow\Inject
@@ -119,147 +88,6 @@ class McpBridgeController extends ActionController
     }
 
     // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    private function getSiteNodePath(): string
-    {
-        $site = $this->siteRepository->findDefault();
-        if ($site === null) {
-            $this->throwStatus(500, 'No site found', json_encode(['error' => 'No default site found']));
-        }
-        return '/sites/' . $site->getNodeName();
-    }
-
-    private function createContext(string $workspace = 'live'): \Neos\ContentRepository\Domain\Service\Context
-    {
-        return $this->contextFactory->create([
-            'workspaceName' => $workspace,
-            'invisibleContentShown' => true,
-            'removedContentShown' => false,
-            'inaccessibleContentShown' => false,
-        ]);
-    }
-
-    private function requireWorkspace(string $workspaceName): void
-    {
-        if ($workspaceName !== 'live' && $this->workspaceRepository->findByIdentifier($workspaceName) === null) {
-            $this->throwStatus(400, 'Workspace not found', json_encode(['error' => "Workspace '{$workspaceName}' does not exist. Call setupWorkspace first."]));
-        }
-    }
-
-    private function ensureMcpWorkspace(): Workspace
-    {
-        $workspace = $this->workspaceRepository->findByIdentifier($this->mcpWorkspaceName);
-        if ($workspace === null) {
-            $liveWorkspace = $this->workspaceRepository->findByIdentifier('live');
-            $workspace = new Workspace($this->mcpWorkspaceName, $liveWorkspace);
-            $workspace->setTitle($this->mcpWorkspaceTitle);
-            $workspace->setDescription($this->mcpWorkspaceDescription);
-            $this->workspaceRepository->add($workspace);
-            $this->persistenceManager->persistAll();
-        }
-        return $workspace;
-    }
-
-    private function serializeNodeProperties(NodeInterface $node): array
-    {
-        $nodeType = $node->getNodeType();
-        $result = [];
-        foreach (array_keys($nodeType->getProperties()) as $propertyName) {
-            if (str_starts_with($propertyName, '_')) {
-                continue;
-            }
-            $value = $node->getProperty($propertyName);
-            if ($value === null) {
-                $result[$propertyName] = null;
-                continue;
-            }
-            $type = $nodeType->getPropertyType($propertyName);
-            if ($type === 'references' && is_array($value)) {
-                $refs = [];
-                foreach ($value as $refNode) {
-                    if ($refNode instanceof NodeInterface) {
-                        $refs[] = $refNode->getIdentifier();
-                    } elseif (is_string($refNode)) {
-                        $refs[] = $refNode;
-                    }
-                }
-                $result[$propertyName] = $refs;
-            } elseif ($type === 'reference') {
-                if ($value instanceof NodeInterface) {
-                    $result[$propertyName] = $value->getIdentifier();
-                } elseif (is_string($value)) {
-                    $result[$propertyName] = $value;
-                } else {
-                    $result[$propertyName] = null;
-                }
-            } elseif (str_contains($type, 'Image') || str_contains($type, 'Asset') || str_contains($type, 'Media')) {
-                $result[$propertyName] = [
-                    '__type' => 'asset',
-                    'identifier' => $this->persistenceManager->getIdentifierByObject($value),
-                ];
-            } elseif ($value instanceof NodeInterface) {
-                $result[$propertyName] = $value->getContextPath();
-            } elseif (is_object($value)) {
-                try {
-                    $result[$propertyName] = ['__type' => get_class($value), 'identifier' => $this->persistenceManager->getIdentifierByObject($value)];
-                } catch (\Exception $e) {
-                    $result[$propertyName] = null;
-                }
-            } else {
-                $result[$propertyName] = $value;
-            }
-        }
-        return $result;
-    }
-
-    private function serializeNode(NodeInterface $node): array
-    {
-        return [
-            'identifier' => $node->getIdentifier(),
-            'contextPath' => $node->getContextPath(),
-            'path' => $node->getPath(),
-            'nodeType' => $node->getNodeType()->getName(),
-            'name' => $node->getName(),
-        ];
-    }
-
-    private function collectDocumentNodes(NodeInterface $node, int $depth = 0): array
-    {
-        $pages = [];
-        $pages[] = array_merge($this->serializeNode($node), [
-            'title' => $node->getProperty('title') ?? $node->getName(),
-            'hidden' => $node->isHidden(),
-            'depth' => $depth,
-            'properties' => $this->serializeNodeProperties($node),
-        ]);
-        foreach ($node->getChildNodes('Neos.Neos:Document') as $child) {
-            foreach ($this->collectDocumentNodes($child, $depth + 1) as $page) {
-                $pages[] = $page;
-            }
-        }
-        return $pages;
-    }
-
-    private function collectContentNodes(NodeInterface $node): array
-    {
-        $nodes = [];
-        foreach ($node->getChildNodes() as $child) {
-            if ($child->getNodeType()->isOfType('Neos.Neos:Document')) {
-                continue;
-            }
-            $nodes[] = array_merge($this->serializeNode($child), [
-                'properties' => $this->serializeNodeProperties($child),
-            ]);
-            foreach ($this->collectContentNodes($child) as $nested) {
-                $nodes[] = $nested;
-            }
-        }
-        return $nodes;
-    }
-
-    // -------------------------------------------------------------------------
     // Actions
     // -------------------------------------------------------------------------
 
@@ -268,41 +96,16 @@ class McpBridgeController extends ActionController
     {
         $this->checkAuth();
 
-        $site = $this->siteRepository->findDefault();
-        $siteNodePath = '/sites/' . $site->getNodeName();
-        $context = $this->createContext('live');
-        $siteNode = $context->getNode($siteNodePath);
-
-        $nodeTypes = [];
-        foreach ($this->nodeTypeManager->getNodeTypes(false) as $nodeType) {
-            if (!$nodeType->isOfType('Neos.Neos:Content') && !$nodeType->isOfType('Neos.Neos:Document')) {
-                continue;
-            }
-            $properties = [];
-            foreach ($nodeType->getProperties() as $name => $config) {
-                if (str_starts_with($name, '_')) {
-                    continue;
-                }
-                $properties[$name] = [
-                    'type' => $nodeType->getPropertyType($name),
-                    'defaultValue' => $nodeType->getDefaultValuesForProperties()[$name] ?? null,
-                    'label' => $config['ui']['label'] ?? $name,
-                ];
-            }
-            $nodeTypes[] = [
-                'name' => $nodeType->getName(),
-                'isContent' => $nodeType->isOfType('Neos.Neos:Content'),
-                'isDocument' => $nodeType->isOfType('Neos.Neos:Document'),
-                'properties' => $properties,
-            ];
-        }
-
-        $pages = $siteNode ? $this->collectDocumentNodes($siteNode) : [];
+        $site = $this->crService->getDefaultSite();
+        $siteNode = $this->crService->getSiteNode('live');
+        $nodeTypes = $this->crService->getNodeTypes('all');
+        $pages = $this->crService->collectDocumentNodes($siteNode, 'live');
 
         $this->view->assign('value', [
+            'apiVersion' => 2,
             'siteName' => $site->getName(),
             'siteNodeName' => $site->getNodeName(),
-            'siteNodePath' => $siteNodePath,
+            'siteNodeAggregateId' => $siteNode->aggregateId->value,
             'mcpWorkspace' => $this->mcpWorkspaceName,
             'nodeTypes' => $nodeTypes,
             'pages' => $pages,
@@ -320,12 +123,17 @@ class McpBridgeController extends ActionController
     public function setupWorkspaceAction(): void
     {
         $this->checkAuth();
-        $workspace = $this->ensureMcpWorkspace();
+        $this->crService->ensureWorkspace(
+            $this->mcpWorkspaceName,
+            $this->mcpWorkspaceTitle,
+            $this->mcpWorkspaceDescription
+        );
+
         $this->view->assign('value', [
             'success' => true,
             'workspace' => [
-                'name' => $workspace->getName(),
-                'title' => $workspace->getTitle(),
+                'name' => $this->mcpWorkspaceName,
+                'title' => $this->mcpWorkspaceTitle,
             ],
         ]);
     }
@@ -335,62 +143,67 @@ class McpBridgeController extends ActionController
     {
         $this->checkAuth();
         $this->requireWorkspace($workspace);
-        $context = $this->createContext($workspace);
-        $siteNode = $context->getNode($this->getSiteNodePath());
-        if ($siteNode === null) {
-            $this->view->assign('value', ['pages' => []]);
-            return;
-        }
-        $this->view->assign('value', ['pages' => $this->collectDocumentNodes($siteNode)]);
+        $siteNode = $this->crService->getSiteNode($workspace);
+        $this->view->assign('value', ['pages' => $this->crService->collectDocumentNodes($siteNode, $workspace)]);
     }
 
     /** @Flow\SkipCsrfProtection */
-    public function getPageContentAction(string $nodePath = '', string $workspace = 'mcp'): void
+    public function getPageContentAction(string $nodeAggregateId = '', string $workspace = 'mcp'): void
     {
         $this->checkAuth();
         $this->requireWorkspace($workspace);
-        if ($nodePath === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
+        if ($nodeAggregateId === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId is required']));
         }
-        $context = $this->createContext($workspace);
-        $pageNode = $context->getNode($nodePath);
+
+        $pageNode = $this->crService->findNodeById($nodeAggregateId, $workspace);
         if ($pageNode === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
         }
+
+        $subgraph = $this->crService->getSubgraph($workspace);
+        $cr = $this->crService->getContentRepository();
+
+        // Collect content from ContentCollection children
         $contentNodes = [];
-        foreach ($pageNode->getChildNodes() as $child) {
-            if ($child->getNodeType()->isOfType('Neos.Neos:ContentCollection')) {
-                foreach ($this->collectContentNodes($child) as $node) {
+        $children = $this->crService->findChildNodes($pageNode->aggregateId, $workspace);
+        foreach ($children as $child) {
+            $childNodeType = $cr->getNodeTypeManager()->getNodeType($child->nodeTypeName);
+            if ($childNodeType !== null && $childNodeType->isOfType('Neos.Neos:ContentCollection')) {
+                foreach ($this->crService->collectContentNodes($child, $workspace) as $node) {
                     $contentNodes[] = $node;
                 }
             }
         }
+
         $this->view->assign('value', [
-            'page' => array_merge($this->serializeNode($pageNode), [
-                'title' => $pageNode->getProperty('title') ?? $pageNode->getName(),
-                'properties' => $this->serializeNodeProperties($pageNode),
+            'page' => array_merge($this->crService->serializeNode($pageNode, $subgraph), [
+                'title' => $pageNode->getProperty('title') ?? $pageNode->name?->value ?? '',
+                'properties' => $this->crService->serializeNodeProperties($pageNode),
             ]),
             'contentNodes' => $contentNodes,
         ]);
     }
 
     /** @Flow\SkipCsrfProtection */
-    public function getDocumentPropertiesAction(string $nodePath = '', string $workspace = 'mcp'): void
+    public function getDocumentPropertiesAction(string $nodeAggregateId = '', string $workspace = 'mcp'): void
     {
         $this->checkAuth();
         $this->requireWorkspace($workspace);
-        if ($nodePath === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
+        if ($nodeAggregateId === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId is required']));
         }
-        $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+
+        $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
         if ($node === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
         }
-        $this->view->assign('value', array_merge($this->serializeNode($node), [
-            'title' => $node->getProperty('title') ?? $node->getName(),
-            'hidden' => $node->isHidden(),
-            'properties' => $this->serializeNodeProperties($node),
+
+        $subgraph = $this->crService->getSubgraph($workspace);
+        $this->view->assign('value', array_merge($this->crService->serializeNode($node, $subgraph), [
+            'title' => $node->getProperty('title') ?? $node->name?->value ?? '',
+            'hidden' => $this->crService->isNodeHidden($node),
+            'properties' => $this->crService->serializeNodeProperties($node),
         ]));
     }
 
@@ -398,60 +211,19 @@ class McpBridgeController extends ActionController
     public function listNodeTypesAction(string $filter = 'content'): void
     {
         $this->checkAuth();
-        $nodeTypes = [];
-        foreach ($this->nodeTypeManager->getNodeTypes(false) as $nodeType) {
-            if ($filter === 'content' && !$nodeType->isOfType('Neos.Neos:Content')) {
-                continue;
-            }
-            if ($filter === 'document' && !$nodeType->isOfType('Neos.Neos:Document')) {
-                continue;
-            }
-            $properties = [];
-            foreach ($nodeType->getProperties() as $name => $config) {
-                if (str_starts_with($name, '_')) {
-                    continue;
-                }
-                $properties[$name] = [
-                    'type' => $nodeType->getPropertyType($name),
-                    'defaultValue' => $nodeType->getDefaultValuesForProperties()[$name] ?? null,
-                    'label' => $config['ui']['label'] ?? $name,
-                ];
-            }
-            $nodeTypes[] = [
-                'name' => $nodeType->getName(),
-                'properties' => $properties,
-            ];
-        }
-        $this->view->assign('value', ['nodeTypes' => $nodeTypes]);
+        $this->view->assign('value', ['nodeTypes' => $this->crService->getNodeTypes($filter)]);
     }
 
     /** @Flow\SkipCsrfProtection */
     public function listPendingChangesAction(string $workspace = 'mcp'): void
     {
         $this->checkAuth();
-        $workspaceObject = $this->workspaceRepository->findByIdentifier($workspace);
-        if ($workspaceObject === null) {
-            $this->view->assign('value', ['pendingChanges' => [], 'workspace' => $workspace]);
+        if (!$this->crService->workspaceExists($workspace)) {
+            $this->view->assign('value', ['pendingChanges' => [], 'workspace' => $workspace, 'count' => 0]);
             return;
         }
-        $unpublished = $this->publishingService->getUnpublishedNodes($workspaceObject);
-        $changes = [];
-        foreach ($unpublished as $node) {
-            $shadowNode = null;
-            try {
-                $liveContext = $this->createContext('live');
-                $shadowNode = $liveContext->getNodeByIdentifier($node->getIdentifier());
-            } catch (\Exception $e) {
-                // node is new
-            }
-            $changes[] = [
-                'identifier' => $node->getIdentifier(),
-                'contextPath' => $node->getContextPath(),
-                'path' => $node->getPath(),
-                'nodeType' => $node->getNodeType()->getName(),
-                'changeType' => $shadowNode === null ? 'added' : ($node->isRemoved() ? 'removed' : 'modified'),
-            ];
-        }
+
+        $changes = $this->crService->getPendingChanges($workspace);
         $this->view->assign('value', [
             'workspace' => $workspace,
             'count' => count($changes),
@@ -460,12 +232,17 @@ class McpBridgeController extends ActionController
     }
 
     /** @Flow\SkipCsrfProtection */
-    public function getPreviewUrlAction(string $nodePath = '', string $workspace = 'mcp'): void
+    public function getPreviewUrlAction(string $nodeAggregateId = '', string $workspace = 'mcp'): void
     {
         $this->checkAuth();
         $this->requireWorkspace($workspace);
-        if ($nodePath === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
+        if ($nodeAggregateId === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId is required']));
+        }
+
+        $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
+        if ($node === null) {
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
         }
 
         $token = bin2hex(random_bytes(32));
@@ -473,83 +250,66 @@ class McpBridgeController extends ActionController
 
         $payload = json_encode([
             'workspace' => $workspace,
-            'nodePath' => $nodePath,
+            'nodeAggregateId' => $nodeAggregateId,
             'expiresAt' => $expiresAt->format(\DateTimeInterface::ATOM),
         ]);
         $this->previewTokensCache->set($token, $payload);
 
         $baseUrl = rtrim((string) $this->request->getHttpRequest()->getUri()->withPath('')->withQuery('')->withFragment(''), '/');
-
-        // Build the frontend URL using uriPathSegment properties (not node names)
-        $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
-        $siteNodePath = $this->getSiteNodePath();
-        $segments = [];
-        $current = $node;
-        while ($current !== null && $current->getPath() !== $siteNodePath) {
-            $segment = $current->getProperty('uriPathSegment');
-            if ($segment !== null && $segment !== '') {
-                array_unshift($segments, $segment);
-            }
-            $current = $current->getParent();
-        }
-        $frontendPath = '/' . implode('/', $segments);
-
+        $frontendPath = $this->crService->buildFrontendPath($node, $workspace);
         $previewUrl = $baseUrl . $frontendPath . '?_mcpPreview=' . $token;
 
         $this->view->assign('value', [
             'previewUrl' => $previewUrl,
             'token' => $token,
             'workspace' => $workspace,
-            'nodePath' => $nodePath,
+            'nodeAggregateId' => $nodeAggregateId,
             'expiresAt' => $expiresAt->format(\DateTimeInterface::ATOM),
         ]);
     }
 
     /** @Flow\SkipCsrfProtection */
     public function createContentNodeAction(
-        string $parentPath = '',
+        string $parentNodeAggregateId = '',
         string $nodeType = '',
         array $properties = [],
         string $workspace = 'mcp'
     ): void {
         $this->checkAuth();
-        if ($parentPath === '' || $nodeType === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'parentPath and nodeType are required']));
+        if ($parentNodeAggregateId === '' || $nodeType === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'parentNodeAggregateId and nodeType are required']));
         }
 
-        $this->ensureMcpWorkspace();
-        $context = $this->createContext($workspace);
-        $parentNode = $context->getNode($parentPath);
+        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
+        $parentNode = $this->crService->findNodeById($parentNodeAggregateId, $workspace);
         if ($parentNode === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentPath]));
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentNodeAggregateId]));
         }
-
-        $nodeTypeObject = $this->nodeTypeManager->getNodeType($nodeType);
-        $template = new NodeTemplate();
-        $template->setNodeType($nodeTypeObject);
 
         $safeName = strtolower(preg_replace('/[^a-z0-9]/i', '-', $nodeType));
         $nodeName = $safeName . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
-        $template->setName($nodeName);
 
-        foreach ($properties as $key => $value) {
-            $template->setProperty($key, $value);
-        }
+        $newNodeId = $this->crService->createNode(
+            $workspace,
+            $parentNodeAggregateId,
+            $nodeType,
+            $properties,
+            $nodeName,
+        );
 
-        $newNode = $parentNode->createNodeFromTemplate($template);
-        $this->persistenceManager->persistAll();
+        $newNode = $this->crService->findNodeById($newNodeId->value, $workspace);
+        $subgraph = $this->crService->getSubgraph($workspace);
 
         $this->view->assign('value', [
             'success' => true,
-            'node' => $this->serializeNode($newNode),
+            'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
         ]);
     }
 
     /** @Flow\SkipCsrfProtection */
     public function createDocumentNodeAction(
-        string $parentPath = '',
+        string $parentNodeAggregateId = '',
         string $nodeType = '',
         array $properties = [],
         string $workspace = 'mcp',
@@ -558,21 +318,16 @@ class McpBridgeController extends ActionController
         string $insertAfter = ''
     ): void {
         $this->checkAuth();
-        if ($parentPath === '' || $nodeType === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'parentPath and nodeType are required']));
+        if ($parentNodeAggregateId === '' || $nodeType === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'parentNodeAggregateId and nodeType are required']));
         }
 
-        $this->ensureMcpWorkspace();
-        $context = $this->createContext($workspace);
-        $parentNode = $context->getNode($parentPath);
+        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
+        $parentNode = $this->crService->findNodeById($parentNodeAggregateId, $workspace);
         if ($parentNode === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentPath]));
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentNodeAggregateId]));
         }
-
-        $nodeTypeObject = $this->nodeTypeManager->getNodeType($nodeType);
-        $template = new NodeTemplate();
-        $template->setNodeType($nodeTypeObject);
 
         if ($nodeName !== '') {
             $safeName = strtolower(preg_replace('/[^a-z0-9-]/i', '-', $nodeName));
@@ -580,207 +335,154 @@ class McpBridgeController extends ActionController
             $safeName = strtolower(preg_replace('/[^a-z0-9]/i', '-', $nodeType));
             $safeName = $safeName . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
         }
-        $template->setName($safeName);
 
-        foreach ($properties as $key => $value) {
-            $template->setProperty($key, $value);
+        // For insertBefore, pass the target as succeedingSibling
+        $succeedingSiblingId = $insertBefore !== '' ? $insertBefore : null;
+
+        $newNodeId = $this->crService->createNode(
+            $workspace,
+            $parentNodeAggregateId,
+            $nodeType,
+            $properties,
+            $safeName,
+            $succeedingSiblingId,
+        );
+
+        // For insertAfter, move the node after creation
+        if ($insertAfter !== '') {
+            // insertAfter means the new node should come after $insertAfter,
+            // so $insertAfter becomes the preceding sibling
+            $this->crService->moveNode(
+                $workspace,
+                $newNodeId->value,
+                newPrecedingSiblingId: $insertAfter,
+            );
         }
 
-        $newNode = $parentNode->createNodeFromTemplate($template);
-
-        if ($insertBefore !== '') {
-            $siblingPath = preg_replace('/@.*$/', '', $insertBefore);
-            $sibling = $context->getNode($siblingPath);
-            if ($sibling === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertBefore node not found: ' . $insertBefore]));
-            }
-            $newNode->moveBefore($sibling);
-        } elseif ($insertAfter !== '') {
-            $siblingPath = preg_replace('/@.*$/', '', $insertAfter);
-            $sibling = $context->getNode($siblingPath);
-            if ($sibling === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertAfter node not found: ' . $insertAfter]));
-            }
-            $newNode->moveAfter($sibling);
-        }
+        $newNode = $this->crService->findNodeById($newNodeId->value, $workspace);
+        $subgraph = $this->crService->getSubgraph($workspace);
 
         $this->emitNodeMutated($newNode, 'New element added');
-        $this->persistenceManager->persistAll();
 
         $this->view->assign('value', [
             'success' => true,
-            'node' => $this->serializeNode($newNode),
+            'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
         ]);
     }
 
     /** @Flow\SkipCsrfProtection */
     public function moveNodeAction(
-        string $contextPath = '',
+        string $nodeAggregateId = '',
         string $insertBefore = '',
         string $insertAfter = '',
-        string $newParentPath = '',
+        string $newParentId = '',
         string $workspace = 'mcp'
     ): void {
         $this->checkAuth();
-        if ($contextPath === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'contextPath is required']));
+        if ($nodeAggregateId === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId is required']));
         }
-        $provided = array_filter([$insertBefore, $insertAfter, $newParentPath], fn($v) => $v !== '');
+        $provided = array_filter([$insertBefore, $insertAfter, $newParentId], fn($v) => $v !== '');
         if (count($provided) !== 1) {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'Provide exactly one of insertBefore, insertAfter, or newParentPath']));
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'Provide exactly one of insertBefore, insertAfter, or newParentId']));
         }
 
-        $this->ensureMcpWorkspace();
-        $nodePath = preg_replace('/@.*$/', '', $contextPath);
-        $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
+        $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
         if ($node === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
         }
 
         if ($insertBefore !== '') {
-            $refPath = preg_replace('/@.*$/', '', $insertBefore);
-            $ref = $context->getNode($refPath);
-            if ($ref === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertBefore node not found: ' . $insertBefore]));
-            }
-            $node->moveBefore($ref);
+            // insertBefore: the target becomes the succeeding sibling
+            $this->crService->moveNode($workspace, $nodeAggregateId, newSucceedingSiblingId: $insertBefore);
         } elseif ($insertAfter !== '') {
-            $refPath = preg_replace('/@.*$/', '', $insertAfter);
-            $ref = $context->getNode($refPath);
-            if ($ref === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertAfter node not found: ' . $insertAfter]));
-            }
-            $node->moveAfter($ref);
+            // insertAfter: the target becomes the preceding sibling
+            $this->crService->moveNode($workspace, $nodeAggregateId, newPrecedingSiblingId: $insertAfter);
         } else {
-            $ref = $context->getNode($newParentPath);
-            if ($ref === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'newParentPath node not found: ' . $newParentPath]));
-            }
-            $node->moveInto($ref);
+            // Move into new parent
+            $this->crService->moveNode($workspace, $nodeAggregateId, newParentId: $newParentId);
         }
 
         $this->emitNodeMutated($node, 'Element moved');
-        $this->persistenceManager->persistAll();
 
         $this->view->assign('value', [
             'success' => true,
-            'contextPath' => $node->getContextPath(),
+            'nodeAggregateId' => $nodeAggregateId,
         ]);
     }
 
     /** @Flow\SkipCsrfProtection */
     public function updateNodePropertyAction(
-        string $contextPath = '',
+        string $nodeAggregateId = '',
         string $property = '',
         string $value = '',
         string $workspace = 'mcp'
     ): void {
         $this->checkAuth();
-        if ($contextPath === '' || $property === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'contextPath and property are required']));
+        if ($nodeAggregateId === '' || $property === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId and property are required']));
         }
 
-        $this->ensureMcpWorkspace();
-        // Extract node path from context path (strip @workspace)
-        $nodePath = preg_replace('/@.*$/', '', $contextPath);
-        $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
+        $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
         if ($node === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
         }
 
-        // Resolve asset references: if the property type is an Image/Asset and the value looks like an asset identifier, look it up
-        $resolvedValue = $value;
-        $nodeType = $node->getNodeType();
-        $propertyType = $nodeType->getPropertyType($property);
-        if ($propertyType !== null && (str_contains($propertyType, 'Image') || str_contains($propertyType, 'Asset'))) {
-            $assetIdentifier = $value;
-            // Support both plain UUID and JSON object format {"__type":"asset","identifier":"uuid"}
-            if (is_string($value) && str_starts_with(trim($value), '{')) {
-                $decoded = json_decode($value, true);
-                if (is_array($decoded) && isset($decoded['identifier'])) {
-                    $assetIdentifier = $decoded['identifier'];
-                }
-            }
-            $asset = $this->assetRepository->findByIdentifier($assetIdentifier);
-            if ($asset !== null) {
-                $resolvedValue = $asset;
-            } else {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Asset not found: ' . $assetIdentifier]));
-            }
-        }
-
-        // Handle boolean values passed as strings
-        if (is_string($resolvedValue) && in_array(strtolower($resolvedValue), ['true', 'false'], true)) {
-            $resolvedValue = strtolower($resolvedValue) === 'true';
-        }
-
-        // Resolve reference: store as node identifier string (Neos resolves to NodeInterface on read)
-        if ($propertyType === 'reference' && is_string($resolvedValue) && $resolvedValue !== '') {
-            $referencedNode = $context->getNodeByIdentifier($resolvedValue);
-            if ($referencedNode === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Referenced node not found: ' . $resolvedValue]));
-            }
-            // Keep as string identifier — Neos stores references as identifier strings
-        }
-
-        // Resolve references: accept JSON array string, comma-separated string, or PHP array of node identifiers
-        // Neos stores references as identifier strings in NodeData properties; it resolves to NodeInterface on read
-        if ($propertyType === 'references') {
-            if (is_string($resolvedValue)) {
-                // Try JSON decode first (e.g. '["uuid1","uuid2"]')
-                $decoded = json_decode($resolvedValue, true);
-                if (is_array($decoded)) {
-                    $identifiers = $decoded;
-                } else {
-                    // Fall back to comma-separated (Flow may implode array params to "uuid1,uuid2")
-                    $identifiers = array_filter(array_map('trim', explode(',', $resolvedValue)));
-                }
-            } elseif (is_array($resolvedValue)) {
-                $identifiers = $resolvedValue;
-            } else {
-                $identifiers = [];
-            }
-            $validated = [];
-            foreach ($identifiers as $identifier) {
-                $refNode = $context->getNodeByIdentifier($identifier);
-                if ($refNode !== null) {
-                    $validated[] = $identifier;
-                }
-            }
-            $resolvedValue = $validated;
-        }
-
-        // Resolve DateTime: parse date string → \DateTime object
-        if ($propertyType === 'DateTime' && is_string($resolvedValue) && $resolvedValue !== '') {
-            try {
-                $resolvedValue = new \DateTime($resolvedValue);
-            } catch (\Exception $e) {
-                $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'Invalid date format: ' . $resolvedValue]));
-            }
-        }
-
-        // Resolve array: JSON string → PHP array
-        if ($propertyType === 'array' && is_string($resolvedValue)) {
-            $decoded = json_decode($resolvedValue, true);
-            if (is_array($decoded)) {
-                $resolvedValue = $decoded;
-            }
-        }
-
-        // System properties (prefixed with _) need dedicated setters
+        // System properties with dedicated handlers
         if ($property === '_hidden') {
-            $node->setHidden((bool)$resolvedValue);
-        } elseif ($property === '_hiddenInIndex') {
-            $node->setHiddenInIndex((bool)$resolvedValue);
-        } else {
-            $node->setProperty($property, $resolvedValue);
+            $hidden = is_string($value) ? strtolower($value) === 'true' || $value === '1' : (bool) $value;
+            $this->crService->setNodeHidden($workspace, $nodeAggregateId, $hidden);
+            $this->emitNodeMutated($node, "Property '_hidden' changed");
+            $this->view->assign('value', [
+                'success' => true,
+                'nodeAggregateId' => $nodeAggregateId,
+                'property' => $property,
+                'newValue' => $hidden,
+            ]);
+            return;
         }
+
+        // Check property type for references
+        $cr = $this->crService->getContentRepository();
+        $nodeType = $cr->getNodeTypeManager()->getNodeType($node->nodeTypeName);
+        $propertyType = $nodeType?->getPropertyType($property);
+
+        // Handle reference types via SetNodeReferences command
+        if ($propertyType === 'reference') {
+            $targetIds = $value !== '' ? [$value] : [];
+            $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
+            $this->emitNodeMutated($node, "Property '{$property}' changed");
+            $this->view->assign('value', [
+                'success' => true,
+                'nodeAggregateId' => $nodeAggregateId,
+                'property' => $property,
+                'newValue' => $value,
+            ]);
+            return;
+        }
+
+        if ($propertyType === 'references') {
+            $targetIds = $this->crService->resolveReferenceIdentifiers($value, $workspace);
+            $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
+            $this->emitNodeMutated($node, "Property '{$property}' changed");
+            $this->view->assign('value', [
+                'success' => true,
+                'nodeAggregateId' => $nodeAggregateId,
+                'property' => $property,
+                'newValue' => $targetIds,
+            ]);
+            return;
+        }
+
+        // Regular property — resolve value type and set
+        $resolvedValue = $this->crService->resolvePropertyValue($node, $property, $value);
+        $this->crService->setNodeProperties($workspace, $nodeAggregateId, [$property => $resolvedValue]);
+
         $this->emitNodeMutated($node, "Property '{$property}' changed");
-        $this->persistenceManager->persistAll();
 
         $displayValue = $resolvedValue instanceof \Neos\Media\Domain\Model\AssetInterface
             ? 'asset,' . $this->persistenceManager->getIdentifierByObject($resolvedValue)
@@ -788,36 +490,33 @@ class McpBridgeController extends ActionController
 
         $this->view->assign('value', [
             'success' => true,
-            'contextPath' => $node->getContextPath(),
+            'nodeAggregateId' => $nodeAggregateId,
             'property' => $property,
             'newValue' => $displayValue,
         ]);
     }
 
     /** @Flow\SkipCsrfProtection */
-    public function deleteNodeAction(string $contextPath = '', string $workspace = 'mcp'): void
+    public function deleteNodeAction(string $nodeAggregateId = '', string $workspace = 'mcp'): void
     {
         $this->checkAuth();
-        if ($contextPath === '') {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'contextPath is required']));
+        if ($nodeAggregateId === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId is required']));
         }
 
-        $this->ensureMcpWorkspace();
-        $nodePath = preg_replace('/@.*$/', '', $contextPath);
-        $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
+        $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
         if ($node === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
         }
 
         $this->emitNodeMutated($node, 'Element removed');
-        $node->remove();
-        $this->persistenceManager->persistAll();
+        $this->crService->removeNode($workspace, $nodeAggregateId);
 
         $this->view->assign('value', [
             'success' => true,
-            'removedContextPath' => $contextPath,
+            'removedNodeAggregateId' => $nodeAggregateId,
         ]);
     }
 
@@ -825,16 +524,11 @@ class McpBridgeController extends ActionController
     public function publishChangesAction(string $workspace = 'mcp'): void
     {
         $this->checkAuth();
-        $workspaceObject = $this->workspaceRepository->findByIdentifier($workspace);
-        if ($workspaceObject === null) {
+        if (!$this->crService->workspaceExists($workspace)) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Workspace not found: ' . $workspace]));
         }
 
-        $unpublished = $this->publishingService->getUnpublishedNodes($workspaceObject);
-        $count = count($unpublished);
-
-        $this->publishingService->publishNodes($unpublished);
-        $this->persistenceManager->persistAll();
+        $count = $this->crService->publishWorkspace($workspace);
 
         $this->view->assign('value', [
             'success' => true,
@@ -845,16 +539,10 @@ class McpBridgeController extends ActionController
     }
 
     // -------------------------------------------------------------------------
-    // Assets / Media
+    // Assets / Media (unchanged — Neos Media API is stable)
     // -------------------------------------------------------------------------
 
-    /**
-     * List assets from the Neos Media Manager.
-     * Supports filtering by mediaType prefix (e.g. "image") and tag name.
-     * Returns identifier, title, filename, mediaType, fileSize, and tags.
-     *
-     * @Flow\SkipCsrfProtection
-     */
+    /** @Flow\SkipCsrfProtection */
     public function listAssetsAction(string $mediaType = 'image', string $tag = '', int $limit = 50, int $offset = 0): void
     {
         $this->checkAuth();
@@ -903,7 +591,6 @@ class McpBridgeController extends ActionController
             ];
         }
 
-        // Filter by tag name if specified (post-query filter since tag is a relation)
         if ($tag !== '') {
             $result = array_values(array_filter($result, function ($item) use ($tag) {
                 return in_array($tag, $item['tags'], true);
@@ -920,11 +607,7 @@ class McpBridgeController extends ActionController
         ]);
     }
 
-    /**
-     * List all available tags in the Media Manager.
-     *
-     * @Flow\SkipCsrfProtection
-     */
+    /** @Flow\SkipCsrfProtection */
     public function listAssetTagsAction(): void
     {
         $this->checkAuth();
@@ -942,6 +625,17 @@ class McpBridgeController extends ActionController
     }
 
     // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private function requireWorkspace(string $workspaceName): void
+    {
+        if ($workspaceName !== 'live' && !$this->crService->workspaceExists($workspaceName)) {
+            $this->throwStatus(400, 'Workspace not found', json_encode(['error' => "Workspace '{$workspaceName}' does not exist. Call setupWorkspace first."]));
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Signals
     // -------------------------------------------------------------------------
 
@@ -950,7 +644,7 @@ class McpBridgeController extends ActionController
      *
      * @Flow\Signal
      */
-    protected function emitNodeMutated(NodeInterface $node, string $changeDescription): void
+    protected function emitNodeMutated(?Node $node, string $changeDescription): void
     {
     }
 }

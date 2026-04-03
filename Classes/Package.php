@@ -1,9 +1,9 @@
 <?php
+
 declare(strict_types=1);
 
 namespace UpAssist\Neos\Mcp;
 
-use Neos\ContentRepository\Domain\Model\Node;
 use Neos\Flow\Core\Bootstrap;
 use Neos\Flow\Package\Package as BasePackage;
 use UpAssist\Neos\Mcp\Controller\McpBridgeController;
@@ -22,11 +22,8 @@ class Package extends BasePackage
             'handleNodeMutated'
         );
 
-        $dispatcher->connect(
-            Node::class,
-            'nodePropertyChanged',
-            ReviewStatusService::class,
-            'handleReviewStatusChanged'
-        );
+        // Note: The Neos 8 signal Node::nodePropertyChanged no longer exists in Neos 9.
+        // Review status clearing on approval is now handled by the CommandHook
+        // (ReviewStatusCommandHookFactory) registered in Settings.yaml.
     }
 }

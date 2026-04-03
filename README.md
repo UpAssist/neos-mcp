@@ -4,6 +4,15 @@
 
 This package adds an HTTP bridge to your Neos CMS installation that AI tools like Claude Code and Cursor can connect to via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). The AI can read pages, create and edit content, manage assets, and generate preview links. All changes are staged in a separate workspace so an editor can review before publishing.
 
+## Compatibility
+
+| Package version | Neos CMS | PHP   | MCP Server                |
+|----------------|----------|-------|---------------------------|
+| 2.x (`main`)   | 9.0+     | 8.2+  | @upassist/neos-mcp 2.x   |
+| 1.x (`neos-8`) | 8.3+     | 8.1+  | @upassist/neos-mcp 1.x   |
+
+> **Neos 8 users:** Switch to the `neos-8` branch: `composer require upassist/neos-mcp:^1.0`
+
 ## How it works
 
 ```

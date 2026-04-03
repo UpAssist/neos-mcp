@@ -1,13 +1,22 @@
 <?php
+
 declare(strict_types=1);
 
 namespace UpAssist\Neos\Mcp\Aspect;
 
+use Neos\ContentRepository\Core\SharedModel\Node\NodeAddress;
+use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Aop\JoinPointInterface;
 use UpAssist\Neos\Mcp\Service\PreviewTokenService;
 
 /**
+ * Switches the workspace context for frontend preview when a valid MCP preview token is active.
+ *
+ * In Neos 9, the frontend NodeController receives a NodeAddress JSON string.
+ * This aspect rewrites the workspace in that address to the preview workspace
+ * and bypasses the isLive() guard.
+ *
  * @Flow\Aspect
  */
 class WorkspacePreviewAspect
@@ -19,39 +28,51 @@ class WorkspacePreviewAspect
     protected $previewTokenService;
 
     /**
-     * Switch the workspace context to the preview workspace when a valid preview token is active.
-     * Skips routing-phase calls (identified by the presence of currentSite in the input properties)
-     * to avoid entity-privilege failures before the security framework is fully initialized.
+     * Intercept NodeController::showAction() to switch the NodeAddress workspace
+     * from 'live' to the preview workspace when a valid preview token is active.
      *
-     * @Flow\Around("method(Neos\ContentRepository\Domain\Service\ContextFactory->create())")
+     * @Flow\Around("method(Neos\Neos\Controller\Frontend\NodeController->showAction())")
      */
     public function applyWorkspacePreview(JoinPointInterface $joinPoint): mixed
     {
-        if ($this->previewTokenService->hasActivePreview()) {
-            $contextProperties = $joinPoint->getMethodArgument('contextProperties');
-            // Skip during routing/error-page phases: those callers always pass currentSite explicitly.
-            if (!isset($contextProperties['currentSite'])) {
-                // Only override if not already targeting a specific non-live workspace
-                if (!isset($contextProperties['workspaceName']) || $contextProperties['workspaceName'] === 'live') {
-                    $contextProperties['workspaceName'] = $this->previewTokenService->getActiveWorkspace();
-                    $joinPoint->setMethodArgument('contextProperties', $contextProperties);
-                }
-            }
+        if (!$this->previewTokenService->hasActivePreview()) {
+            return $joinPoint->getAdviceChain()->proceed($joinPoint);
         }
+
+        $nodeJson = $joinPoint->getMethodArgument('node');
+        $nodeAddress = NodeAddress::fromJsonString($nodeJson);
+
+        // Only override if targeting live workspace
+        if ($nodeAddress->workspaceName->isLive()) {
+            $previewAddress = NodeAddress::create(
+                $nodeAddress->contentRepositoryId,
+                WorkspaceName::fromString($this->previewTokenService->getActiveWorkspace()),
+                $nodeAddress->dimensionSpacePoint,
+                $nodeAddress->aggregateId,
+            );
+            $joinPoint->setMethodArgument('node', $previewAddress->toJson());
+        }
+
         return $joinPoint->getAdviceChain()->proceed($joinPoint);
     }
 
     /**
-     * During an active preview, pretend the context is live so NodeController::showAction() passes
-     * its isLive() guard. The node itself is already in the preview workspace (switched above),
-     * so Fusion naturally renders content from that workspace via getChildNodes() etc.
+     * During an active preview, bypass the isLive() check in NodeController::showAction().
+     * The showAction throws NodeNotFoundException when !isLive() — this aspect prevents that
+     * by making the workspace appear live.
      *
-     * @Flow\Around("method(Neos\Neos\Domain\Service\ContentContext->isLive())")
+     * We hook into WorkspaceName::isLive() to return true for the preview workspace.
+     *
+     * @Flow\Around("method(Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName->isLive())")
      */
     public function fakeIsLiveForPreview(JoinPointInterface $joinPoint): bool
     {
         if ($this->previewTokenService->hasActivePreview()) {
-            return true;
+            $workspaceName = $joinPoint->getProxy();
+            if ($workspaceName instanceof WorkspaceName
+                && $workspaceName->value === $this->previewTokenService->getActiveWorkspace()) {
+                return true;
+            }
         }
         return $joinPoint->getAdviceChain()->proceed($joinPoint);
     }

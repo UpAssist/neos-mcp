@@ -1,9 +1,11 @@
 <?php
+
 declare(strict_types=1);
 
 namespace UpAssist\Neos\Mcp\Aspect;
 
-use Neos\ContentRepository\Domain\Model\NodeInterface;
+use Neos\ContentRepository\Core\Projection\ContentGraph\Node;
+use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Aop\JoinPointInterface;
 
@@ -16,6 +18,12 @@ use Neos\Flow\Aop\JoinPointInterface;
 class ReviewStatusNodeInfoAspect
 {
     /**
+     * @Flow\Inject
+     * @var ContentRepositoryRegistry
+     */
+    protected $contentRepositoryRegistry;
+
+    /**
      * @Flow\Around("method(Neos\Neos\Ui\Fusion\Helper\NodeInfoHelper->renderNodeWithMinimalPropertiesAndChildrenInformation())")
      */
     public function addReviewStatusToMinimalNodeInfo(JoinPointInterface $joinPoint): mixed
@@ -27,11 +35,13 @@ class ReviewStatusNodeInfoAspect
         }
 
         $node = $joinPoint->getMethodArgument('node');
-        if (!$node instanceof NodeInterface) {
+        if (!$node instanceof Node) {
             return $result;
         }
 
-        if (array_key_exists('reviewStatus', $node->getNodeType()->getProperties())) {
+        $cr = $this->contentRepositoryRegistry->get($node->contentRepositoryId);
+        $nodeType = $cr->getNodeTypeManager()->getNodeType($node->nodeTypeName);
+        if ($nodeType !== null && array_key_exists('reviewStatus', $nodeType->getProperties())) {
             $result['properties']['reviewStatus'] = $node->getProperty('reviewStatus') ?? 'approved';
         }
 
