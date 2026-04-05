@@ -99,7 +99,7 @@ class McpBridgeController extends ActionController
         $site = $this->crService->getDefaultSite();
         $siteNode = $this->crService->getSiteNode('live');
         $nodeTypes = $this->crService->getNodeTypes('all');
-        $pages = $this->crService->collectDocumentNodes($siteNode, 'live');
+        $pages = $this->crService->collectDocumentNodes($siteNode, 'live', includeProperties: false);
 
         $this->view->assign('value', [
             'apiVersion' => 2,
@@ -164,12 +164,14 @@ class McpBridgeController extends ActionController
         $subgraph = $this->crService->getSubgraph($workspace);
         $cr = $this->crService->getContentRepository();
 
-        // Collect content from ContentCollection children
+        // Collect ContentCollections and their content nodes
+        $contentCollections = [];
         $contentNodes = [];
         $children = $this->crService->findChildNodes($pageNode->aggregateId, $workspace);
         foreach ($children as $child) {
             $childNodeType = $cr->getNodeTypeManager()->getNodeType($child->nodeTypeName);
             if ($childNodeType !== null && $childNodeType->isOfType('Neos.Neos:ContentCollection')) {
+                $contentCollections[] = $this->crService->serializeNode($child, $subgraph);
                 foreach ($this->crService->collectContentNodes($child, $workspace) as $node) {
                     $contentNodes[] = $node;
                 }
@@ -181,6 +183,7 @@ class McpBridgeController extends ActionController
                 'title' => $pageNode->getProperty('title') ?? $pageNode->name?->value ?? '',
                 'properties' => $this->crService->serializeNodeProperties($pageNode),
             ]),
+            'contentCollections' => $contentCollections,
             'contentNodes' => $contentNodes,
         ]);
     }

@@ -635,7 +635,6 @@ class ContentRepositoryService
                 }
                 $properties[$name] = [
                     'type' => $nodeType->getPropertyType($name),
-                    'defaultValue' => $nodeType->getDefaultValuesForProperties()[$name] ?? null,
                     'label' => $config['ui']['label'] ?? $name,
                 ];
             }
@@ -655,17 +654,22 @@ class ContentRepositoryService
     // Document tree traversal
     // -------------------------------------------------------------------------
 
-    public function collectDocumentNodes(Node $node, string $workspace = 'live', int $depth = 0): array
+    public function collectDocumentNodes(Node $node, string $workspace = 'live', int $depth = 0, bool $includeProperties = true): array
     {
         $subgraph = $this->getSubgraph($workspace);
         $pages = [];
 
-        $pages[] = array_merge($this->serializeNode($node, $subgraph), [
+        $entry = array_merge($this->serializeNode($node, $subgraph), [
             'title' => $node->getProperty('title') ?? $node->name?->value ?? '',
             'hidden' => $this->isNodeHidden($node),
             'depth' => $depth,
-            'properties' => $this->serializeNodeProperties($node),
         ]);
+
+        if ($includeProperties) {
+            $entry['properties'] = $this->serializeNodeProperties($node);
+        }
+
+        $pages[] = $entry;
 
         $children = $subgraph->findChildNodes(
             $node->aggregateId,
@@ -673,7 +677,7 @@ class ContentRepositoryService
         );
 
         foreach ($children as $child) {
-            foreach ($this->collectDocumentNodes($child, $workspace, $depth + 1) as $page) {
+            foreach ($this->collectDocumentNodes($child, $workspace, $depth + 1, $includeProperties) as $page) {
                 $pages[] = $page;
             }
         }
