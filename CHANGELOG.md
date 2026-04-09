@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## 2.0.2 (2026-04-09)
+
+
+### Bug Fixes
+
+* remove `neos/content-repository-registry` from composer require — it is bundled with `neos/neos` and not available as a standalone package
+
 ## 2.0.1 (2026-04-09)
 
 
