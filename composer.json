@@ -12,8 +12,7 @@
     ],
     "require": {
         "neos/neos": "^9.0",
-        "neos/flow": "^9.0",
-        "neos/content-repository-registry": "^1.0"
+        "neos/flow": "^9.0"
     },
     "autoload": {
         "psr-4": {
