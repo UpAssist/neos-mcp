@@ -162,20 +162,14 @@ class McpBridgeController extends ActionController
         }
 
         $subgraph = $this->crService->getSubgraph($workspace);
-        $cr = $this->crService->getContentRepository();
 
-        // Collect ContentCollections and their content nodes
-        $contentCollections = [];
+        // Collect all ContentCollections recursively (including nested ones, e.g. Columns → Column)
+        $contentCollections = $this->crService->collectContentCollections($pageNode, $workspace);
+
+        // Collect all content nodes (flat list of everything on the page)
         $contentNodes = [];
-        $children = $this->crService->findChildNodes($pageNode->aggregateId, $workspace);
-        foreach ($children as $child) {
-            $childNodeType = $cr->getNodeTypeManager()->getNodeType($child->nodeTypeName);
-            if ($childNodeType !== null && $childNodeType->isOfType('Neos.Neos:ContentCollection')) {
-                $contentCollections[] = $this->crService->serializeNode($child, $subgraph);
-                foreach ($this->crService->collectContentNodes($child, $workspace) as $node) {
-                    $contentNodes[] = $node;
-                }
-            }
+        foreach ($this->crService->collectContentNodes($pageNode, $workspace) as $node) {
+            $contentNodes[] = $node;
         }
 
         $this->view->assign('value', [
@@ -283,31 +277,35 @@ class McpBridgeController extends ActionController
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'parentNodeAggregateId and nodeType are required']));
         }
 
-        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
+        try {
+            $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
-        $parentNode = $this->crService->findNodeById($parentNodeAggregateId, $workspace);
-        if ($parentNode === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentNodeAggregateId]));
+            $parentNode = $this->crService->findNodeById($parentNodeAggregateId, $workspace);
+            if ($parentNode === null) {
+                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentNodeAggregateId]));
+            }
+
+            $safeName = strtolower(preg_replace('/[^a-z0-9]/i', '-', $nodeType));
+            $nodeName = $safeName . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
+
+            $newNodeId = $this->crService->createNode(
+                $workspace,
+                $parentNodeAggregateId,
+                $nodeType,
+                $properties,
+                $nodeName,
+            );
+
+            $newNode = $this->crService->findNodeById($newNodeId->value, $workspace);
+            $subgraph = $this->crService->getSubgraph($workspace);
+
+            $this->view->assign('value', [
+                'success' => true,
+                'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
+            ]);
+        } catch (\Exception $e) {
+            $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
-
-        $safeName = strtolower(preg_replace('/[^a-z0-9]/i', '-', $nodeType));
-        $nodeName = $safeName . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
-
-        $newNodeId = $this->crService->createNode(
-            $workspace,
-            $parentNodeAggregateId,
-            $nodeType,
-            $properties,
-            $nodeName,
-        );
-
-        $newNode = $this->crService->findNodeById($newNodeId->value, $workspace);
-        $subgraph = $this->crService->getSubgraph($workspace);
-
-        $this->view->assign('value', [
-            'success' => true,
-            'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
-        ]);
     }
 
     /** @Flow\SkipCsrfProtection */
@@ -325,52 +323,56 @@ class McpBridgeController extends ActionController
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'parentNodeAggregateId and nodeType are required']));
         }
 
-        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
+        try {
+            $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
-        $parentNode = $this->crService->findNodeById($parentNodeAggregateId, $workspace);
-        if ($parentNode === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentNodeAggregateId]));
-        }
+            $parentNode = $this->crService->findNodeById($parentNodeAggregateId, $workspace);
+            if ($parentNode === null) {
+                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentNodeAggregateId]));
+            }
 
-        if ($nodeName !== '') {
-            $safeName = strtolower(preg_replace('/[^a-z0-9-]/i', '-', $nodeName));
-        } else {
-            $safeName = strtolower(preg_replace('/[^a-z0-9]/i', '-', $nodeType));
-            $safeName = $safeName . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
-        }
+            if ($nodeName !== '') {
+                $safeName = strtolower(preg_replace('/[^a-z0-9-]/i', '-', $nodeName));
+            } else {
+                $safeName = strtolower(preg_replace('/[^a-z0-9]/i', '-', $nodeType));
+                $safeName = $safeName . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
+            }
 
-        // For insertBefore, pass the target as succeedingSibling
-        $succeedingSiblingId = $insertBefore !== '' ? $insertBefore : null;
+            // For insertBefore, pass the target as succeedingSibling
+            $succeedingSiblingId = $insertBefore !== '' ? $insertBefore : null;
 
-        $newNodeId = $this->crService->createNode(
-            $workspace,
-            $parentNodeAggregateId,
-            $nodeType,
-            $properties,
-            $safeName,
-            $succeedingSiblingId,
-        );
-
-        // For insertAfter, move the node after creation
-        if ($insertAfter !== '') {
-            // insertAfter means the new node should come after $insertAfter,
-            // so $insertAfter becomes the preceding sibling
-            $this->crService->moveNode(
+            $newNodeId = $this->crService->createNode(
                 $workspace,
-                $newNodeId->value,
-                newPrecedingSiblingId: $insertAfter,
+                $parentNodeAggregateId,
+                $nodeType,
+                $properties,
+                $safeName,
+                $succeedingSiblingId,
             );
+
+            // For insertAfter, move the node after creation
+            if ($insertAfter !== '') {
+                // insertAfter means the new node should come after $insertAfter,
+                // so $insertAfter becomes the preceding sibling
+                $this->crService->moveNode(
+                    $workspace,
+                    $newNodeId->value,
+                    newPrecedingSiblingId: $insertAfter,
+                );
+            }
+
+            $newNode = $this->crService->findNodeById($newNodeId->value, $workspace);
+            $subgraph = $this->crService->getSubgraph($workspace);
+
+            $this->emitNodeMutated($newNode, 'New element added');
+
+            $this->view->assign('value', [
+                'success' => true,
+                'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
+            ]);
+        } catch (\Exception $e) {
+            $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
-
-        $newNode = $this->crService->findNodeById($newNodeId->value, $workspace);
-        $subgraph = $this->crService->getSubgraph($workspace);
-
-        $this->emitNodeMutated($newNode, 'New element added');
-
-        $this->view->assign('value', [
-            'success' => true,
-            'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
-        ]);
     }
 
     /** @Flow\SkipCsrfProtection */
@@ -390,30 +392,34 @@ class McpBridgeController extends ActionController
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'Provide exactly one of insertBefore, insertAfter, or newParentId']));
         }
 
-        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
+        try {
+            $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
-        $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
-        if ($node === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
+            $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
+            if ($node === null) {
+                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
+            }
+
+            if ($insertBefore !== '') {
+                // insertBefore: the target becomes the succeeding sibling
+                $this->crService->moveNode($workspace, $nodeAggregateId, newSucceedingSiblingId: $insertBefore);
+            } elseif ($insertAfter !== '') {
+                // insertAfter: the target becomes the preceding sibling
+                $this->crService->moveNode($workspace, $nodeAggregateId, newPrecedingSiblingId: $insertAfter);
+            } else {
+                // Move into new parent
+                $this->crService->moveNode($workspace, $nodeAggregateId, newParentId: $newParentId);
+            }
+
+            $this->emitNodeMutated($node, 'Element moved');
+
+            $this->view->assign('value', [
+                'success' => true,
+                'nodeAggregateId' => $nodeAggregateId,
+            ]);
+        } catch (\Exception $e) {
+            $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
-
-        if ($insertBefore !== '') {
-            // insertBefore: the target becomes the succeeding sibling
-            $this->crService->moveNode($workspace, $nodeAggregateId, newSucceedingSiblingId: $insertBefore);
-        } elseif ($insertAfter !== '') {
-            // insertAfter: the target becomes the preceding sibling
-            $this->crService->moveNode($workspace, $nodeAggregateId, newPrecedingSiblingId: $insertAfter);
-        } else {
-            // Move into new parent
-            $this->crService->moveNode($workspace, $nodeAggregateId, newParentId: $newParentId);
-        }
-
-        $this->emitNodeMutated($node, 'Element moved');
-
-        $this->view->assign('value', [
-            'success' => true,
-            'nodeAggregateId' => $nodeAggregateId,
-        ]);
     }
 
     /** @Flow\SkipCsrfProtection */
@@ -428,75 +434,79 @@ class McpBridgeController extends ActionController
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId and property are required']));
         }
 
-        $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
+        try {
+            $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
 
-        $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
-        if ($node === null) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
-        }
+            $node = $this->crService->findNodeById($nodeAggregateId, $workspace);
+            if ($node === null) {
+                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodeAggregateId]));
+            }
 
-        // System properties with dedicated handlers
-        if ($property === '_hidden') {
-            $hidden = is_string($value) ? strtolower($value) === 'true' || $value === '1' : (bool) $value;
-            $this->crService->setNodeHidden($workspace, $nodeAggregateId, $hidden);
-            $this->emitNodeMutated($node, "Property '_hidden' changed");
-            $this->view->assign('value', [
-                'success' => true,
-                'nodeAggregateId' => $nodeAggregateId,
-                'property' => $property,
-                'newValue' => $hidden,
-            ]);
-            return;
-        }
+            // System properties with dedicated handlers
+            if ($property === '_hidden') {
+                $hidden = is_string($value) ? strtolower($value) === 'true' || $value === '1' : (bool) $value;
+                $this->crService->setNodeHidden($workspace, $nodeAggregateId, $hidden);
+                $this->emitNodeMutated($node, "Property '_hidden' changed");
+                $this->view->assign('value', [
+                    'success' => true,
+                    'nodeAggregateId' => $nodeAggregateId,
+                    'property' => $property,
+                    'newValue' => $hidden,
+                ]);
+                return;
+            }
 
-        // Check property type for references
-        $cr = $this->crService->getContentRepository();
-        $nodeType = $cr->getNodeTypeManager()->getNodeType($node->nodeTypeName);
-        $propertyType = $nodeType?->getPropertyType($property);
+            // Check property type for references
+            $cr = $this->crService->getContentRepository();
+            $nodeType = $cr->getNodeTypeManager()->getNodeType($node->nodeTypeName);
+            $propertyType = $nodeType?->getPropertyType($property);
 
-        // Handle reference types via SetNodeReferences command
-        if ($propertyType === 'reference') {
-            $targetIds = $value !== '' ? [$value] : [];
-            $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
+            // Handle reference types via SetNodeReferences command
+            if ($propertyType === 'reference') {
+                $targetIds = $value !== '' ? [$value] : [];
+                $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
+                $this->emitNodeMutated($node, "Property '{$property}' changed");
+                $this->view->assign('value', [
+                    'success' => true,
+                    'nodeAggregateId' => $nodeAggregateId,
+                    'property' => $property,
+                    'newValue' => $value,
+                ]);
+                return;
+            }
+
+            if ($propertyType === 'references') {
+                $targetIds = $this->crService->resolveReferenceIdentifiers($value, $workspace);
+                $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
+                $this->emitNodeMutated($node, "Property '{$property}' changed");
+                $this->view->assign('value', [
+                    'success' => true,
+                    'nodeAggregateId' => $nodeAggregateId,
+                    'property' => $property,
+                    'newValue' => $targetIds,
+                ]);
+                return;
+            }
+
+            // Regular property — resolve value type and set
+            $resolvedValue = $this->crService->resolvePropertyValue($node, $property, $value);
+            $this->crService->setNodeProperties($workspace, $nodeAggregateId, [$property => $resolvedValue]);
+
             $this->emitNodeMutated($node, "Property '{$property}' changed");
+
+            $displayValue = $resolvedValue instanceof \Neos\Media\Domain\Model\AssetInterface
+                ? 'asset,' . $this->persistenceManager->getIdentifierByObject($resolvedValue)
+                : $value;
+
             $this->view->assign('value', [
                 'success' => true,
                 'nodeAggregateId' => $nodeAggregateId,
                 'property' => $property,
-                'newValue' => $value,
+                'newValue' => $displayValue,
             ]);
-            return;
+        } catch (\Exception $e) {
+            $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
-
-        if ($propertyType === 'references') {
-            $targetIds = $this->crService->resolveReferenceIdentifiers($value, $workspace);
-            $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
-            $this->emitNodeMutated($node, "Property '{$property}' changed");
-            $this->view->assign('value', [
-                'success' => true,
-                'nodeAggregateId' => $nodeAggregateId,
-                'property' => $property,
-                'newValue' => $targetIds,
-            ]);
-            return;
-        }
-
-        // Regular property — resolve value type and set
-        $resolvedValue = $this->crService->resolvePropertyValue($node, $property, $value);
-        $this->crService->setNodeProperties($workspace, $nodeAggregateId, [$property => $resolvedValue]);
-
-        $this->emitNodeMutated($node, "Property '{$property}' changed");
-
-        $displayValue = $resolvedValue instanceof \Neos\Media\Domain\Model\AssetInterface
-            ? 'asset,' . $this->persistenceManager->getIdentifierByObject($resolvedValue)
-            : $value;
-
-        $this->view->assign('value', [
-            'success' => true,
-            'nodeAggregateId' => $nodeAggregateId,
-            'property' => $property,
-            'newValue' => $displayValue,
-        ]);
     }
 
     /** @Flow\SkipCsrfProtection */

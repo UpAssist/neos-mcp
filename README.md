@@ -87,9 +87,12 @@ The AI will call `neos_get_site_context` and show you the site structure. From t
 
 ## Requirements
 
-- Neos CMS 8.3+
-- PHP 8.1+
-- Node.js 18+ (for the MCP server)
+| Version | Neos CMS | PHP | Branch |
+|---------|----------|-----|--------|
+| v2.x | 9.0+ | 8.2+ | `main` (this branch) |
+| v1.x | 8.3 | 8.1+ | `neos-8` |
+
+Node.js 18+ is required for the MCP server in both versions.
 
 ## Configuration
 

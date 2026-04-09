@@ -685,6 +685,39 @@ class ContentRepositoryService
         return $pages;
     }
 
+    /**
+     * Recursively collect all ContentCollection nodes beneath a given node,
+     * including those nested inside content nodes (e.g. Column nodes inside a Columns wrapper).
+     */
+    public function collectContentCollections(Node $node, string $workspace = 'live'): array
+    {
+        $subgraph = $this->getSubgraph($workspace);
+        $cr = $this->getContentRepository();
+        $collections = [];
+
+        $children = $subgraph->findChildNodes($node->aggregateId, FindChildNodesFilter::create());
+        foreach ($children as $child) {
+            $childNodeType = $cr->getNodeTypeManager()->getNodeType($child->nodeTypeName);
+            if ($childNodeType === null) {
+                continue;
+            }
+            if ($childNodeType->isOfType('Neos.Neos:ContentCollection')) {
+                $collections[] = $this->serializeNode($child, $subgraph);
+                // Recurse to find nested collections inside this collection
+                foreach ($this->collectContentCollections($child, $workspace) as $nested) {
+                    $collections[] = $nested;
+                }
+            } elseif (!$childNodeType->isOfType('Neos.Neos:Document')) {
+                // Recurse into non-document content nodes (e.g. Columns wrapper contains Column collections)
+                foreach ($this->collectContentCollections($child, $workspace) as $nested) {
+                    $collections[] = $nested;
+                }
+            }
+        }
+
+        return $collections;
+    }
+
     public function collectContentNodes(Node $node, string $workspace = 'live'): array
     {
         $subgraph = $this->getSubgraph($workspace);
