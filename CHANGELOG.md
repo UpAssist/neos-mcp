@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [2.0.3](https://github.com/UpAssist/neos-mcp/compare/2.0.2...2.0.3) (2026-04-23)
+
+
+### Bug Fixes
+
+* render mcp preview for anonymous token holders ([88a2dee](https://github.com/UpAssist/neos-mcp/commit/88a2dee9c428390bfcfb34583c5561c933fc4579)), closes [#1430218623](https://github.com/UpAssist/neos-mcp/issues/1430218623)
+
 ## 2.0.2 (2026-04-09)
 
 
