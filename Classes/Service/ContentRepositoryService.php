@@ -553,7 +553,20 @@ class ContentRepositoryService
             return $asset;
         }
 
-        // Boolean handling
+        // Boolean handling — coerce by property type so JSON true/false/0/1/""
+        // all end up as a real PHP bool on boolean-typed properties.
+        if ($propertyType === 'boolean' || $propertyType === 'bool') {
+            if (is_bool($rawValue)) {
+                return $rawValue;
+            }
+            if (is_string($rawValue)) {
+                $normalized = strtolower(trim($rawValue));
+                return in_array($normalized, ['true', '1', 'yes', 'on'], true);
+            }
+            return (bool) $rawValue;
+        }
+
+        // Legacy string coercion for callers that didn't declare a boolean schema
         if (is_string($rawValue) && in_array(strtolower($rawValue), ['true', 'false'], true)) {
             return strtolower($rawValue) === 'true';
         }
