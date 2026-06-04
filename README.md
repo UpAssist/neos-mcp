@@ -85,10 +85,17 @@ Start your Neos instance, open Claude Code (or Cursor), and ask:
 
 The AI will call `neos_get_site_context` and show you the site structure. From there you can ask it to edit content, create pages, upload images, and more — all staged for your review.
 
+## Version compatibility
+
+| Package version | Neos CMS | Branch    |
+| --------------- | -------- | --------- |
+| `^2.0`          | 9.x      | `main`    |
+| `^1.0`          | 8.3      | `neos-8`  |
+
 ## Requirements
 
-- Neos CMS 8.3+
-- PHP 8.1+
+- Neos CMS 9.x (use `^1.0` for Neos 8.3)
+- PHP 8.2+
 - Node.js 18+ (for the MCP server)
 
 ## Configuration
