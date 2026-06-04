@@ -82,6 +82,13 @@ class McpBridgeController extends ActionController
     {
         $authHeader = $this->request->getHttpRequest()->getHeaderLine('Authorization');
         $token = str_replace('Bearer ', '', $authHeader);
+
+        // Fallback: nginx/PHP-FPM strips the Authorization header before PHP sees it.
+        // Read token from X-MCP-Token header which nginx passes through unchanged.
+        if (empty($token)) {
+            $token = $_SERVER['HTTP_X_MCP_TOKEN'] ?? '';
+        }
+
         if (empty($this->apiToken) || !hash_equals((string) $this->apiToken, $token)) {
             $this->throwStatus(401, 'Unauthorized', json_encode(['error' => 'Unauthorized']));
         }

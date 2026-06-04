@@ -37,6 +37,13 @@ class ApiTokenProvider extends AbstractProvider
         }
 
         $bearer = $authenticationToken->getBearer();
+
+        // Fallback: nginx/PHP-FPM strips the Authorization header before PHP sees it.
+        // Read token from X-MCP-Token header which nginx passes through unchanged.
+        if ($bearer === '') {
+            $bearer = $_SERVER['HTTP_X_MCP_TOKEN'] ?? '';
+        }
+
         if ($bearer === '' || empty($this->apiToken)) {
             $authenticationToken->setAuthenticationStatus(TokenInterface::NO_CREDENTIALS_GIVEN);
             return;
