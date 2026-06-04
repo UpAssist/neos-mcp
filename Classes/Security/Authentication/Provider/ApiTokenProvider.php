@@ -37,6 +37,15 @@ class ApiTokenProvider extends AbstractProvider
         }
 
         $bearer = $authenticationToken->getBearer();
+
+        // Fallback: nginx/PHP-FPM may strip the Authorization header before Flow reads it
+        if ($bearer === '' && isset($_SERVER['HTTP_AUTHORIZATION'])) {
+            $raw = $_SERVER['HTTP_AUTHORIZATION'];
+            if (strpos($raw, 'Bearer ') === 0) {
+                $bearer = substr($raw, 7);
+            }
+        }
+
         if ($bearer === '' || empty($this->apiToken)) {
             $authenticationToken->setAuthenticationStatus(TokenInterface::NO_CREDENTIALS_GIVEN);
             return;
