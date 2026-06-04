@@ -38,12 +38,10 @@ class ApiTokenProvider extends AbstractProvider
 
         $bearer = $authenticationToken->getBearer();
 
-        // Fallback: nginx/PHP-FPM may strip the Authorization header before Flow reads it
-        if ($bearer === '' && isset($_SERVER['HTTP_AUTHORIZATION'])) {
-            $raw = $_SERVER['HTTP_AUTHORIZATION'];
-            if (strpos($raw, 'Bearer ') === 0) {
-                $bearer = substr($raw, 7);
-            }
+        // Fallback: nginx/PHP-FPM strips the Authorization header before PHP sees it.
+        // Read token from X-MCP-Token header which nginx passes through unchanged.
+        if ($bearer === '') {
+            $bearer = $_SERVER['HTTP_X_MCP_TOKEN'] ?? '';
         }
 
         if ($bearer === '' || empty($this->apiToken)) {
