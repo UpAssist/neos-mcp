@@ -2,14 +2,7 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## 2.0.5 (2026-06-04) — Neos 9
-
-### Bug fixes
-
-- Remove MCP controllers from `Neos.Neos:Backend` requestPatterns — the WebRedirect entryPoint was intercepting Bearer token API calls and redirecting to `/neos/login`
-- Add `X-MCP-Token` header fallback in `checkAuth()` and `ApiTokenProvider` for servers where nginx/PHP-FPM strips the `Authorization` header before PHP sees it
-
-## 1.0.1 (2026-06-04) — Neos 8
+## 1.0.1 (2026-06-04)
 
 ### Bug fixes
 
