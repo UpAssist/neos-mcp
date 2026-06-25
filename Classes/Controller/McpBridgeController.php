@@ -202,6 +202,10 @@ class McpBridgeController extends ActionController
                     $result[$propertyName] = null;
                 }
             } elseif (str_contains($type, 'Image') || str_contains($type, 'Asset') || str_contains($type, 'Media')) {
+                if (!is_object($value)) {
+                    $result[$propertyName] = null;
+                    continue;
+                }
                 $result[$propertyName] = [
                     '__type' => 'asset',
                     'identifier' => $this->persistenceManager->getIdentifierByObject($value),
