@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.2](https://github.com/UpAssist/neos-mcp/compare/1.0.1...1.0.2) (2026-07-15)
+
+
+### Bug Fixes
+
+* guard asset property serialization against non-object values ([c0340b2](https://github.com/UpAssist/neos-mcp/commit/c0340b2f62031c820301ec138540383eac603ee1))
+
 ## 1.0.1 (2026-06-04)
 
 ### Bug fixes
