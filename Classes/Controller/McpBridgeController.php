@@ -202,10 +202,10 @@ class McpBridgeController extends ActionController
                     $result[$propertyName] = null;
                 }
             } elseif (str_contains($type, 'Image') || str_contains($type, 'Asset') || str_contains($type, 'Media')) {
-                $result[$propertyName] = [
-                    '__type' => 'asset',
-                    'identifier' => $this->persistenceManager->getIdentifierByObject($value),
-                ];
+                // Asset-typed properties may hold a non-object (e.g. empty string) when unset; only serialize real objects
+                $result[$propertyName] = is_object($value)
+                    ? ['__type' => 'asset', 'identifier' => $this->persistenceManager->getIdentifierByObject($value)]
+                    : null;
             } elseif ($value instanceof NodeInterface) {
                 $result[$propertyName] = $value->getContextPath();
             } elseif (is_object($value)) {
