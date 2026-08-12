@@ -326,6 +326,21 @@ The Review tab in the inspector shows:
 
 All endpoints are available under `/neos/mcp/` and accept/return JSON. Every request requires a `Authorization: Bearer <token>` header.
 
+### Property resolution
+
+`updateNodeProperty`, `createContentNode`, and `createDocumentNode` all resolve property values against the target NodeType's declared property type before writing them:
+
+| Property type | Accepted input | Resolved to |
+| --- | --- | --- |
+| Image / Asset | Asset UUID, or `{"__type":"asset","identifier":"<uuid>"}` | The `Asset`/`Image` entity |
+| `reference` | Node identifier (UUID) | Validated node identifier string |
+| `references` | JSON array, comma-separated string, or PHP array of node identifiers | Validated array of node identifier strings |
+| `DateTime` | Date string | `\DateTime` |
+| `array` | JSON string | PHP array |
+| `boolean` | `"true"` / `"false"` string | `bool` |
+
+If an asset or referenced node can't be found, or a date string is invalid, the call fails with a `404`/`400` and no node is created or modified — properties are never written unresolved.
+
 ### GET /neos/mcp/getSiteContext
 
 Returns site info, all node types with properties, and the page tree. Typically the first call an MCP client makes.
@@ -356,11 +371,11 @@ Update a single property on a node. Parameters: `contextPath` (required), `prope
 
 ### POST /neos/mcp/createContentNode
 
-Create a content node. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`).
+Create a content node. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`). `properties` values are resolved the same way as `updateNodeProperty` — see [Property resolution](#property-resolution) below.
 
 ### POST /neos/mcp/createDocumentNode
 
-Create a page. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`), `nodeName` (optional), `insertBefore`/`insertAfter` (optional).
+Create a page. Parameters: `parentPath` (required), `nodeType` (required), `properties` (optional), `workspace` (default: `mcp`), `nodeName` (optional), `insertBefore`/`insertAfter` (optional). `properties` values are resolved the same way as `updateNodeProperty` — see [Property resolution](#property-resolution) below.
 
 ### POST /neos/mcp/moveNode
 

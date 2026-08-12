@@ -1,0 +1,8 @@
+'UpAssist.Neos.Mcp:Test.ContentWithImage':
+  superTypes:
+    'Neos.Neos:Content': true
+  properties:
+    title:
+      type: string
+    image:
+      type: Neos\Media\Domain\Model\ImageInterface

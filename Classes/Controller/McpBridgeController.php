@@ -20,6 +20,7 @@ use Neos\Media\Domain\Repository\TagRepository;
 use Neos\Media\Domain\Model\AssetCollection;
 use Neos\Media\Domain\Model\ImageInterface;
 use Neos\Cache\Frontend\StringFrontend;
+use UpAssist\Neos\Mcp\Service\NodePropertyResolutionException;
 
 class McpBridgeController extends ActionController
 {
@@ -74,6 +75,12 @@ class McpBridgeController extends ActionController
      * @var TagRepository
      */
     protected $tagRepository;
+
+    /**
+     * @Flow\Inject
+     * @var \UpAssist\Neos\Mcp\Service\NodePropertyResolver
+     */
+    protected $nodePropertyResolver;
 
     /**
      * @Flow\Inject
@@ -541,7 +548,13 @@ class McpBridgeController extends ActionController
         $template->setName($nodeName);
 
         foreach ($properties as $key => $value) {
-            $template->setProperty($key, $value);
+            $propertyType = $nodeTypeObject->getPropertyType($key);
+            try {
+                $resolvedValue = $this->nodePropertyResolver->resolve($context, $propertyType, $value);
+            } catch (NodePropertyResolutionException $e) {
+                $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+            }
+            $template->setProperty($key, $resolvedValue);
         }
 
         $newNode = $parentNode->createNodeFromTemplate($template);
@@ -589,7 +602,13 @@ class McpBridgeController extends ActionController
         $template->setName($safeName);
 
         foreach ($properties as $key => $value) {
-            $template->setProperty($key, $value);
+            $propertyType = $nodeTypeObject->getPropertyType($key);
+            try {
+                $resolvedValue = $this->nodePropertyResolver->resolve($context, $propertyType, $value);
+            } catch (NodePropertyResolutionException $e) {
+                $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+            }
+            $template->setProperty($key, $resolvedValue);
         }
 
         $newNode = $parentNode->createNodeFromTemplate($template);
@@ -698,83 +717,12 @@ class McpBridgeController extends ActionController
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
 
-        // Resolve asset references: if the property type is an Image/Asset and the value looks like an asset identifier, look it up
-        $resolvedValue = $value;
         $nodeType = $node->getNodeType();
         $propertyType = $nodeType->getPropertyType($property);
-        if ($propertyType !== null && (str_contains($propertyType, 'Image') || str_contains($propertyType, 'Asset'))) {
-            $assetIdentifier = $value;
-            // Support both plain UUID and JSON object format {"__type":"asset","identifier":"uuid"}
-            if (is_string($value) && str_starts_with(trim($value), '{')) {
-                $decoded = json_decode($value, true);
-                if (is_array($decoded) && isset($decoded['identifier'])) {
-                    $assetIdentifier = $decoded['identifier'];
-                }
-            }
-            $asset = $this->assetRepository->findByIdentifier($assetIdentifier);
-            if ($asset !== null) {
-                $resolvedValue = $asset;
-            } else {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Asset not found: ' . $assetIdentifier]));
-            }
-        }
-
-        // Handle boolean values passed as strings
-        if (is_string($resolvedValue) && in_array(strtolower($resolvedValue), ['true', 'false'], true)) {
-            $resolvedValue = strtolower($resolvedValue) === 'true';
-        }
-
-        // Resolve reference: store as node identifier string (Neos resolves to NodeInterface on read)
-        if ($propertyType === 'reference' && is_string($resolvedValue) && $resolvedValue !== '') {
-            $referencedNode = $context->getNodeByIdentifier($resolvedValue);
-            if ($referencedNode === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Referenced node not found: ' . $resolvedValue]));
-            }
-            // Keep as string identifier — Neos stores references as identifier strings
-        }
-
-        // Resolve references: accept JSON array string, comma-separated string, or PHP array of node identifiers
-        // Neos stores references as identifier strings in NodeData properties; it resolves to NodeInterface on read
-        if ($propertyType === 'references') {
-            if (is_string($resolvedValue)) {
-                // Try JSON decode first (e.g. '["uuid1","uuid2"]')
-                $decoded = json_decode($resolvedValue, true);
-                if (is_array($decoded)) {
-                    $identifiers = $decoded;
-                } else {
-                    // Fall back to comma-separated (Flow may implode array params to "uuid1,uuid2")
-                    $identifiers = array_filter(array_map('trim', explode(',', $resolvedValue)));
-                }
-            } elseif (is_array($resolvedValue)) {
-                $identifiers = $resolvedValue;
-            } else {
-                $identifiers = [];
-            }
-            $validated = [];
-            foreach ($identifiers as $identifier) {
-                $refNode = $context->getNodeByIdentifier($identifier);
-                if ($refNode !== null) {
-                    $validated[] = $identifier;
-                }
-            }
-            $resolvedValue = $validated;
-        }
-
-        // Resolve DateTime: parse date string → \DateTime object
-        if ($propertyType === 'DateTime' && is_string($resolvedValue) && $resolvedValue !== '') {
-            try {
-                $resolvedValue = new \DateTime($resolvedValue);
-            } catch (\Exception $e) {
-                $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'Invalid date format: ' . $resolvedValue]));
-            }
-        }
-
-        // Resolve array: JSON string → PHP array
-        if ($propertyType === 'array' && is_string($resolvedValue)) {
-            $decoded = json_decode($resolvedValue, true);
-            if (is_array($decoded)) {
-                $resolvedValue = $decoded;
-            }
+        try {
+            $resolvedValue = $this->nodePropertyResolver->resolve($context, $propertyType, $value);
+        } catch (NodePropertyResolutionException $e) {
+            $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
         }
 
         // System properties (prefixed with _) need dedicated setters

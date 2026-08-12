@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## Unreleased
+
+### Bug Fixes
+
+* `createContentNodeAction` and `createDocumentNodeAction` now resolve property values (asset/image references, node references, booleans, dates, arrays) the same way `updateNodePropertyAction` always has, via the new shared `NodePropertyResolver`. Previously, creating a node with an `image`/`asset` property in the same call wrote the raw, unresolved payload, which only surfaced as a 500 ("Override of target type not allowed") on the next `publish_changes` — with no way to fix it short of direct database access. The fix-then-publish workaround (create without the asset property, then set it via `updateNodePropertyAction`) is no longer necessary.
+
 ### [1.0.2](https://github.com/UpAssist/neos-mcp/compare/1.0.1...1.0.2) (2026-07-15)
 
 
