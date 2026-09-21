@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [2.0.8](https://github.com/UpAssist/neos-mcp/compare/2.0.7...2.0.8) (2026-09-21)
+
+
+### Bug Fixes
+
+* use site's default dimension space point instead of assuming dimensionless sites ([345526a](https://github.com/UpAssist/neos-mcp/commit/345526ae37d969f8d5ea81e8cd8ebdc48b424eac)), closes [#3](https://github.com/UpAssist/neos-mcp/issues/3)
+
 ### [2.0.7](https://github.com/UpAssist/neos-mcp/compare/2.0.6...2.0.7) (2026-08-13)
 
 
