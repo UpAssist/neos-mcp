@@ -101,17 +101,26 @@ class ContentRepositoryService
      */
     protected $assetRepository;
 
+    /**
+     * Memoized default site, since it's immutable for the duration of a
+     * request and several methods on this singleton resolve it independently.
+     */
+    private ?Site $defaultSite = null;
+
     // -------------------------------------------------------------------------
     // Core accessors
     // -------------------------------------------------------------------------
 
     public function getDefaultSite(): Site
     {
-        $site = $this->siteRepository->findDefault();
-        if ($site === null) {
-            throw new \RuntimeException('No default site found', 1712000001);
+        if ($this->defaultSite === null) {
+            $site = $this->siteRepository->findDefault();
+            if ($site === null) {
+                throw new \RuntimeException('No default site found', 1712000001);
+            }
+            $this->defaultSite = $site;
         }
-        return $site;
+        return $this->defaultSite;
     }
 
     public function getContentRepositoryId(): ContentRepositoryId
@@ -375,9 +384,14 @@ class ContentRepositoryService
         ?string $newPrecedingSiblingId = null,
         ?string $newSucceedingSiblingId = null,
     ): void {
+        $node = $this->findNodeById($nodeAggregateId, $workspace);
+        if ($node === null) {
+            throw new \RuntimeException('Node not found: ' . $nodeAggregateId, 1712000007);
+        }
+
         $command = MoveNodeAggregate::create(
             WorkspaceName::fromString($workspace),
-            $this->getDefaultDimensionSpacePoint(),
+            $node->originDimensionSpacePoint->toDimensionSpacePoint(),
             NodeAggregateId::fromString($nodeAggregateId),
             RelationDistributionStrategy::STRATEGY_GATHER_ALL,
             $newParentId !== null ? NodeAggregateId::fromString($newParentId) : null,
@@ -390,10 +404,15 @@ class ContentRepositoryService
 
     public function removeNode(string $workspace, string $nodeAggregateId): void
     {
+        $node = $this->findNodeById($nodeAggregateId, $workspace);
+        if ($node === null) {
+            throw new \RuntimeException('Node not found: ' . $nodeAggregateId, 1712000008);
+        }
+
         $command = RemoveNodeAggregate::create(
             WorkspaceName::fromString($workspace),
             NodeAggregateId::fromString($nodeAggregateId),
-            $this->getDefaultDimensionSpacePoint(),
+            $node->originDimensionSpacePoint->toDimensionSpacePoint(),
             NodeVariantSelectionStrategy::STRATEGY_ALL_SPECIALIZATIONS,
         );
 
@@ -402,9 +421,14 @@ class ContentRepositoryService
 
     public function setNodeHidden(string $workspace, string $nodeAggregateId, bool $hidden): void
     {
+        $node = $this->findNodeById($nodeAggregateId, $workspace);
+        if ($node === null) {
+            throw new \RuntimeException('Node not found: ' . $nodeAggregateId, 1712000009);
+        }
+
         $wsName = WorkspaceName::fromString($workspace);
         $nodeId = NodeAggregateId::fromString($nodeAggregateId);
-        $dsp = $this->getDefaultDimensionSpacePoint();
+        $dsp = $node->originDimensionSpacePoint->toDimensionSpacePoint();
         $strategy = NodeVariantSelectionStrategy::STRATEGY_ALL_SPECIALIZATIONS;
 
         if ($hidden) {
