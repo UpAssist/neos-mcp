@@ -114,6 +114,8 @@ Every request to the bridge must include a Bearer token:
 Authorization: Bearer <your-token>
 ```
 
+A request without a valid token is rejected and nothing is executed. Depending on where it is stopped this is a `403` (Flow's method security, the usual case) or a `401` (the controller's own token check), so clients should treat both as "not authorised".
+
 By default, authenticated requests get **Neos.Neos:Administrator** privileges. To restrict this to Editor privileges, add to your site's `Settings.yaml`:
 
 ```yaml
@@ -396,11 +398,54 @@ Generate a 24-hour preview URL. Parameters: `nodePath` (required), `workspace` (
 
 ### GET /neos/mcp/listAssets
 
-List assets from Media Manager. Parameters: `mediaType` (default: `image`), `tag`, `limit` (default: `50`), `offset` (default: `0`).
+List assets from the Media Manager. Parameters: `mediaType` (default: `image`, matched as prefix of the media type, e.g. `image`, `application`; empty for all), `tag` (tag label), `limit` (default: `50`), `offset` (default: `0`).
+
+Both filters are applied in the database query, so `total` is the number of assets matching the filters (not the page size) and `limit`/`offset` page through that filtered set. A `tag` that does not exist returns an empty list with `total: 0`.
 
 ### GET /neos/mcp/listAssetTags
 
 List all asset tags.
+
+### POST /neos/mcp/uploadAsset
+
+Upload a file into the Media Manager. JSON body:
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `filename` | string, required | Target filename including extension (any path parts are stripped) |
+| `content` | string, required | Base64 encoded file content |
+| `title`, `caption`, `copyrightNotice` | string | Optional asset metadata |
+| `tags` | string[] | Tag labels; missing tags are created |
+| `assetCollections` | string[] | Collection titles; missing collections are created |
+| `allowDuplicate` | bool | Default `false`. Without it, a file whose content (SHA1) already exists returns the existing asset with `duplicate: true` instead of creating a second one |
+
+The asset class (Image, Document, Video, Audio) is chosen by Neos' `AssetModelMappingStrategyInterface`, the same way the Media Browser does it. Response:
+
+```json
+{
+  "success": true,
+  "duplicate": false,
+  "asset": {
+    "identifier": "e2d168e1-…",
+    "title": "…",
+    "filename": "example.png",
+    "mediaType": "image/png",
+    "fileSize": 71,
+    "assetType": "Image",
+    "publicUri": "https://…/_Resources/Persistent/…/example.png",
+    "tags": ["…"],
+    "collections": ["…"]
+  }
+}
+```
+
+Good to know:
+
+- The `identifier` can be used as the value of an image/asset property in `updateNodeProperty`, `createContentNode` and `createDocumentNode`.
+- When an existing asset is returned (`duplicate: true`), the `title`, `caption`, `tags` and `assetCollections` from the request are **not** applied to it.
+- Base64 makes the payload about 33% larger than the file. The limit is therefore set by PHP (`post_max_size`, `upload_max_filesize`) and your web server (e.g. nginx `client_max_body_size`), not by this package. Large files are better added through the Media Manager.
+- Assets are not workspace-aware in Neos: an uploaded file is visible in the Media Manager immediately, not only after publishing.
+- Errors: `400` for a missing `filename`/`content` or invalid base64, otherwise `500` with `{"error": "…"}`.
 
 ### POST /neos/mcp/publishChanges
 
@@ -446,6 +491,20 @@ All at `/neos/mcp/entity/`, using Bearer token auth:
 5. The page renders normally — hidden content is **not** shown in previews
 
 </details>
+
+## Testing
+
+The functional tests exercise the HTTP endpoints through the real stack (routing, token authentication, persistence), so the same tests run on the Neos 9 (`main`) and Neos 8 (`neos-8`) branch. Run them from a Neos distribution that has this package installed and `phpunit` available:
+
+```bash
+FLOW_CONTEXT=Testing bin/phpunit \
+  -c Build/BuildEssentials/PhpUnit/FunctionalTests.xml \
+  Packages/Application/UpAssist.Neos.Mcp/Tests/Functional
+```
+
+- The tests need their own database. Configure it in the distribution's `Configuration/Testing/Settings.yaml` (`Neos.Flow.persistence.backendOptions`) and never point it at a database with real content.
+- The package ships `Configuration/Testing/Settings.yaml`, which sets a fixed API token for the test run. It only applies in the `Testing` context.
+- Running the whole functional suite of a distribution that also contains other packages' functional tests can fail on their missing dev dependencies (for example `neos/behat`). In that case run the tests from a clean `neos/neos-base-distribution` that requires this package.
 
 ## License
 
