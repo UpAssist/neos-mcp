@@ -1,0 +1,4 @@
+UpAssist:
+  Neos:
+    Mcp:
+      apiToken: 'functional-test-token'
