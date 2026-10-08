@@ -869,16 +869,35 @@ class McpBridgeController extends ActionController
             $constraints[] = $query->like('resource.mediaType', $mediaType . '/%');
         }
 
+        if ($tag !== '') {
+            // Filter in the query (not afterwards), so total, limit and offset describe the filtered set.
+            $tagObject = $this->tagRepository->findOneByLabel($tag);
+            if ($tagObject === null) {
+                $this->view->assign('value', [
+                    'assets' => [],
+                    'total' => 0,
+                    'limit' => $limit,
+                    'offset' => $offset,
+                    'mediaTypeFilter' => $mediaType,
+                    'tagFilter' => $tag,
+                ]);
+                return;
+            }
+            $constraints[] = $query->contains('tags', $tagObject);
+        }
+
         if (!empty($constraints)) {
             $query->matching($query->logicalAnd($constraints));
         }
+
+        // Count before limit/offset are applied: count() honours them, which would cap total at the page size.
+        $total = $query->count();
 
         $query->setOrderings(['lastModified' => \Neos\Flow\Persistence\QueryInterface::ORDER_DESCENDING]);
         $query->setLimit($limit);
         $query->setOffset($offset);
 
         $assets = $query->execute();
-        $total = $query->count();
 
         $result = [];
         foreach ($assets as $asset) {
@@ -904,13 +923,6 @@ class McpBridgeController extends ActionController
                 'collections' => $collections,
                 'lastModified' => $asset->getLastModified() ? $asset->getLastModified()->format('c') : null,
             ];
-        }
-
-        // Filter by tag name if specified (post-query filter since tag is a relation)
-        if ($tag !== '') {
-            $result = array_values(array_filter($result, function ($item) use ($tag) {
-                return in_array($tag, $item['tags'], true);
-            }));
         }
 
         $this->view->assign('value', [
