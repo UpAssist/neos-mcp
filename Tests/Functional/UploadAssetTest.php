@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace UpAssist\Neos\Mcp\Tests\Functional;
 
-use Neos\Flow\Http\Helper\UriHelper;
 use Neos\Flow\Tests\FunctionalTestCase;
 use Neos\Media\Domain\Repository\AssetCollectionRepository;
 use Neos\Media\Domain\Repository\AssetRepository;
@@ -70,12 +69,21 @@ class UploadAssetTest extends FunctionalTestCase
     }
 
     /**
+     * Flow's method security rejects unauthenticated calls (403) before the controller's own
+     * checkAuth() can answer 401, so either status means "rejected".
+     *
      * @test
      */
-    public function requestWithoutValidTokenIsRejected(): void
+    public function requestsWithoutAValidTokenAreRejectedAndStoreNothing(): void
     {
-        $result = $this->upload(['filename' => 'x.png', 'content' => $this->uniquePng()], 'wrong-token');
-        self::assertSame(401, $result['status']);
+        $content = $this->uniquePng();
+        $sha1 = sha1(base64_decode($content));
+
+        self::assertContains($this->upload(['filename' => 'x.png', 'content' => $content], 'wrong-token')['status'], [401, 403]);
+        self::assertContains($this->upload(['filename' => 'x.png', 'content' => $content], null)['status'], [401, 403]);
+
+        $this->persistenceManager->clearState();
+        self::assertNull($this->objectManager->get(AssetRepository::class)->findOneByResourceSha1($sha1));
     }
 
     /**
