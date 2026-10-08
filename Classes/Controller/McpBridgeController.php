@@ -10,8 +10,14 @@ use Neos\Flow\Mvc\Controller\ActionController;
 use Neos\Flow\Mvc\View\JsonView;
 use Neos\Flow\Persistence\PersistenceManagerInterface;
 use Neos\Cache\Frontend\StringFrontend;
+use Neos\Flow\ResourceManagement\ResourceManager;
+use Neos\Media\Domain\Model\Asset;
+use Neos\Media\Domain\Model\AssetCollection;
+use Neos\Media\Domain\Model\Tag;
+use Neos\Media\Domain\Repository\AssetCollectionRepository;
 use Neos\Media\Domain\Repository\AssetRepository;
 use Neos\Media\Domain\Repository\TagRepository;
+use Neos\Media\Domain\Strategy\AssetModelMappingStrategyInterface;
 use UpAssist\Neos\Mcp\Service\ContentRepositoryService;
 
 class McpBridgeController extends ActionController
@@ -43,6 +49,24 @@ class McpBridgeController extends ActionController
      * @var TagRepository
      */
     protected $tagRepository;
+
+    /**
+     * @Flow\Inject
+     * @var AssetCollectionRepository
+     */
+    protected $assetCollectionRepository;
+
+    /**
+     * @Flow\Inject
+     * @var ResourceManager
+     */
+    protected $resourceManager;
+
+    /**
+     * @Flow\Inject
+     * @var AssetModelMappingStrategyInterface
+     */
+    protected $assetModelMappingStrategy;
 
     /**
      * @Flow\Inject
@@ -644,9 +668,131 @@ class McpBridgeController extends ActionController
         $this->view->assign('value', ['tags' => $result]);
     }
 
+    /**
+     * Upload a file (base64 encoded) into the Neos Media Manager.
+     *
+     * If an asset with identical file content already exists, that asset is returned
+     * instead of creating a duplicate (unless allowDuplicate is set).
+     *
+     * @param array $tags Tag labels; missing tags are created
+     * @param array $assetCollections Asset collection titles; missing collections are created
+     * @Flow\SkipCsrfProtection
+     */
+    public function uploadAssetAction(
+        string $filename = '',
+        string $content = '',
+        string $title = '',
+        string $caption = '',
+        string $copyrightNotice = '',
+        array $tags = [],
+        array $assetCollections = [],
+        bool $allowDuplicate = false
+    ): void {
+        $this->checkAuth();
+        if ($filename === '' || $content === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'filename and content (base64) are required']));
+        }
+
+        $filename = basename(str_replace('\\', '/', $filename));
+        $binary = base64_decode($content, true);
+        if ($binary === false || $binary === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'content is not valid base64']));
+        }
+
+        try {
+            if (!$allowDuplicate) {
+                $existing = $this->assetRepository->findOneByResourceSha1(sha1($binary));
+                if ($existing !== null) {
+                    $this->view->assign('value', [
+                        'success' => true,
+                        'duplicate' => true,
+                        'asset' => $this->serializeAsset($existing),
+                    ]);
+                    return;
+                }
+            }
+
+            $resource = $this->resourceManager->importResourceFromContent($binary, $filename);
+            $assetClassName = $this->assetModelMappingStrategy->map($resource);
+            /** @var Asset $asset */
+            $asset = new $assetClassName($resource);
+
+            if ($title !== '') {
+                $asset->setTitle($title);
+            }
+            if ($caption !== '') {
+                $asset->setCaption($caption);
+            }
+            if ($copyrightNotice !== '') {
+                $asset->setCopyrightNotice($copyrightNotice);
+            }
+
+            foreach (array_unique(array_filter(array_map('trim', $tags))) as $label) {
+                $tag = $this->tagRepository->findOneByLabel($label);
+                if ($tag === null) {
+                    $tag = new Tag($label);
+                    $this->tagRepository->add($tag);
+                }
+                $asset->addTag($tag);
+            }
+
+            $this->assetRepository->add($asset);
+
+            foreach (array_unique(array_filter(array_map('trim', $assetCollections))) as $collectionTitle) {
+                $collection = $this->assetCollectionRepository->findOneByTitle($collectionTitle);
+                if ($collection === null) {
+                    $collection = new AssetCollection($collectionTitle);
+                    $this->assetCollectionRepository->add($collection);
+                }
+                if ($collection->addAsset($asset)) {
+                    $asset->getAssetCollections()->add($collection);
+                }
+                $this->assetCollectionRepository->update($collection);
+            }
+
+            $this->persistenceManager->persistAll();
+
+            $this->view->assign('value', [
+                'success' => true,
+                'duplicate' => false,
+                'asset' => $this->serializeAsset($asset),
+            ]);
+        } catch (\Neos\Flow\Mvc\Exception\StopActionException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private function serializeAsset(\Neos\Media\Domain\Model\AssetInterface $asset): array
+    {
+        $resource = $asset->getResource();
+        $tags = [];
+        foreach ($asset->getTags() as $assetTag) {
+            $tags[] = $assetTag->getLabel();
+        }
+        $collections = [];
+        foreach ($asset->getAssetCollections() as $collection) {
+            $collections[] = $collection->getTitle();
+        }
+
+        return [
+            'identifier' => $this->persistenceManager->getIdentifierByObject($asset),
+            'title' => $asset->getTitle() ?: '',
+            'caption' => $asset->getCaption() ?: '',
+            'filename' => $resource ? $resource->getFilename() : '',
+            'mediaType' => $resource ? $resource->getMediaType() : '',
+            'fileSize' => $resource ? (int) $resource->getFileSize() : 0,
+            'assetType' => (new \ReflectionClass($asset))->getShortName(),
+            'publicUri' => $resource ? $this->resourceManager->getPublicPersistentResourceUri($resource) : null,
+            'tags' => $tags,
+            'collections' => $collections,
+        ];
+    }
 
     private function requireWorkspace(string $workspaceName): void
     {
