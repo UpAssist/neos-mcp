@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.1.0](https://github.com/UpAssist/neos-mcp/compare/2.0.8...2.1.0) (2026-10-08)
+
+
+### Features
+
+* add uploadAsset endpoint for uploading files to the Media Manager ([c86ddfb](https://github.com/UpAssist/neos-mcp/commit/c86ddfb470726de69188df772a09f2e1635d381c))
+
+
+### Bug Fixes
+
+* **listAssets:** apply the tag filter in the query so total, limit and offset match the filtered set ([daec3c4](https://github.com/UpAssist/neos-mcp/commit/daec3c49a17ef0d23f30fe52dcc3b0c259b4bf4b))
+
 ### [2.0.8](https://github.com/UpAssist/neos-mcp/compare/2.0.7...2.0.8) (2026-09-21)
 
 
