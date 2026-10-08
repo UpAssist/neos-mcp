@@ -166,6 +166,7 @@ Once connected, the AI assistant has access to these capabilities:
 |------|-------------|
 | `neos_list_assets` | Browse the Media Manager (filter by type, tag) |
 | `neos_list_asset_tags` | List available asset tags |
+| `neos_upload_asset` | Upload a file (local path, URL or base64) to the Media Manager, incl. title, caption, tags and collections. Identical files are deduplicated. |
 
 ### Review and publish
 
