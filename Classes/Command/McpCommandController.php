@@ -169,7 +169,7 @@ class McpCommandController extends CommandController
             $hidden = strtolower($value) === 'true' || $value === '1';
             $this->crService->setNodeHidden($workspace, $nodeAggregateId, $hidden);
         } else {
-            $resolvedValue = $this->crService->resolvePropertyValue($node, $property, $value);
+            $resolvedValue = $this->crService->resolvePropertyValue($node, $property, $value, $workspace);
             $this->crService->setNodeProperties($workspace, $nodeAggregateId, [$property => $resolvedValue]);
         }
 

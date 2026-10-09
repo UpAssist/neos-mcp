@@ -37,6 +37,7 @@ use Neos\ContentRepository\Core\SharedModel\Node\NodeVariantSelectionStrategy;
 use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
+use Neos\Neos\Domain\Link\Link;
 use Neos\Flow\Persistence\PersistenceManagerInterface;
 use Neos\Media\Domain\Repository\AssetRepository;
 use Neos\Neos\Domain\Model\Site;
@@ -328,7 +329,7 @@ class ContentRepositoryService
                 continue;
             }
 
-            $regularProperties[$propertyName] = $this->resolvePropertyValueForNodeType($nodeType, $propertyName, $rawValue);
+            $regularProperties[$propertyName] = $this->resolvePropertyValueForNodeType($nodeType, $propertyName, $rawValue, $workspace);
         }
 
         return [$regularProperties, $referenceProperties];
@@ -543,6 +544,8 @@ class ContentRepositoryService
                     : null;
             } elseif ($value instanceof \DateTimeInterface) {
                 $result[$propertyName] = $value->format(\DateTimeInterface::ATOM);
+            } elseif ($value instanceof Link) {
+                $result[$propertyName] = $value->jsonSerialize();
             } elseif (is_object($value)) {
                 try {
                     $result[$propertyName] = [
@@ -608,9 +611,11 @@ class ContentRepositoryService
 
     /**
      * Resolve a raw property value to the correct PHP type based on the node type schema.
-     * Handles assets, references, dates, booleans, arrays.
+     * Handles assets, references, dates, booleans, arrays and links.
+     *
+     * Pass the target $workspace to validate node:// link targets against it.
      */
-    public function resolvePropertyValue(Node $node, string $propertyName, mixed $rawValue): mixed
+    public function resolvePropertyValue(Node $node, string $propertyName, mixed $rawValue, ?string $workspace = null): mixed
     {
         $cr = $this->getContentRepository();
         $nodeType = $cr->getNodeTypeManager()->getNodeType($node->nodeTypeName);
@@ -618,7 +623,7 @@ class ContentRepositoryService
             return $rawValue;
         }
 
-        return $this->resolvePropertyValueForNodeType($nodeType, $propertyName, $rawValue);
+        return $this->resolvePropertyValueForNodeType($nodeType, $propertyName, $rawValue, $workspace);
     }
 
     /**
@@ -626,7 +631,7 @@ class ContentRepositoryService
      * instead of an existing Node — used on the create path, where the node doesn't
      * exist yet when properties need to be resolved.
      */
-    public function resolvePropertyValueForNodeType(NodeType $nodeType, string $propertyName, mixed $rawValue): mixed
+    public function resolvePropertyValueForNodeType(NodeType $nodeType, string $propertyName, mixed $rawValue, ?string $workspace = null): mixed
     {
         $propertyType = $nodeType->getPropertyType($propertyName);
 
@@ -649,6 +654,18 @@ class ContentRepositoryService
                 throw new \RuntimeException('Asset not found: ' . $assetIdentifier, 1712000004);
             }
             return $asset;
+        }
+
+        // Link handling — Neos\Neos\Domain\Link\Link value objects (LinkEditor).
+        // Accepts a plain URI string ("node://<id>", "asset://<id>", "https://…"),
+        // a JSON object string or an already-decoded array with at least "href".
+        // With a $workspace, node:// targets must exist in that workspace.
+        if ($propertyType !== null && ltrim($propertyType, '\\') === Link::class) {
+            $link = $this->resolveLinkValue($rawValue);
+            if ($link !== null && $workspace !== null) {
+                $this->assertLinkTargetExists($link, $workspace);
+            }
+            return $link;
         }
 
         // Boolean handling — coerce by property type so JSON true/false/0/1/""
@@ -687,6 +704,72 @@ class ContentRepositoryService
         }
 
         return $rawValue;
+    }
+
+    /**
+     * Convert a raw MCP value into a Link value object, or null to clear the property.
+     */
+    private function resolveLinkValue(mixed $rawValue): ?Link
+    {
+        if ($rawValue === null || $rawValue instanceof Link) {
+            return $rawValue;
+        }
+        if (is_string($rawValue)) {
+            $rawValue = trim($rawValue);
+            if ($rawValue === '' || $rawValue === 'null') {
+                return null;
+            }
+            if (str_starts_with($rawValue, '{')) {
+                $decoded = json_decode($rawValue, true);
+                if (!is_array($decoded)) {
+                    throw new \RuntimeException('Invalid link JSON: ' . $rawValue, 1791540101);
+                }
+                $rawValue = $decoded;
+            } else {
+                return Link::fromString($rawValue);
+            }
+        }
+        if (is_array($rawValue)) {
+            if (!isset($rawValue['href']) || !is_string($rawValue['href']) || trim($rawValue['href']) === '') {
+                throw new \RuntimeException('Link value requires a non-empty "href"', 1791540102);
+            }
+            return Link::fromArray($rawValue);
+        }
+        throw new \RuntimeException('Unsupported link value of type ' . get_debug_type($rawValue), 1791540103);
+    }
+
+    /**
+     * Reject node:// links whose target node does not exist in the given workspace,
+     * so a mistyped or deleted target fails on write instead of rendering a dead link.
+     * Other schemes (asset://, https://, mailto:, …) are not checked.
+     */
+    private function assertLinkTargetExists(Link $link, string $workspace): void
+    {
+        if ($link->href->getScheme() !== 'node') {
+            return;
+        }
+        $targetId = $link->href->getHost();
+        if (!$this->nodeExists($targetId, $workspace)) {
+            throw new \RuntimeException(
+                sprintf('Link target node not found in workspace "%s": %s', $workspace, $targetId),
+                1791540104
+            );
+        }
+    }
+
+    /**
+     * Whether a node with the given aggregate id exists in the workspace. Invalid ids count as missing.
+     */
+    protected function nodeExists(string $nodeAggregateId, string $workspace): bool
+    {
+        if ($nodeAggregateId === '') {
+            return false;
+        }
+        try {
+            return $this->findNodeById($nodeAggregateId, $workspace) !== null;
+        } catch (\InvalidArgumentException $e) {
+            return false;
+        }
     }
 
     /**
