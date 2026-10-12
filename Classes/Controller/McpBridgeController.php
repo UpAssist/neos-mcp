@@ -453,6 +453,21 @@ class McpBridgeController extends ActionController
         }
     }
 
+    /**
+     * Object values (e.g. links: {"href": "node://…", "title": "…"}) arrive as
+     * arrays from the JSON body. Flow's string type converter would implode them,
+     * so re-encode them as JSON before argument mapping.
+     */
+    protected function initializeUpdateNodePropertyAction(): void
+    {
+        if ($this->request->hasArgument('value')) {
+            $value = $this->request->getArgument('value');
+            if (is_array($value)) {
+                $this->request->setArgument('value', json_encode($value));
+            }
+        }
+    }
+
     /** @Flow\SkipCsrfProtection */
     public function updateNodePropertyAction(
         string $nodeAggregateId = '',
@@ -520,7 +535,7 @@ class McpBridgeController extends ActionController
             }
 
             // Regular property — resolve value type and set
-            $resolvedValue = $this->crService->resolvePropertyValue($node, $property, $value);
+            $resolvedValue = $this->crService->resolvePropertyValue($node, $property, $value, $workspace);
             $this->crService->setNodeProperties($workspace, $nodeAggregateId, [$property => $resolvedValue]);
 
             $this->emitNodeMutated($node, "Property '{$property}' changed");
