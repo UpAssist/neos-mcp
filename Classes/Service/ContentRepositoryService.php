@@ -21,6 +21,8 @@ use Neos\ContentRepository\Core\SharedModel\Node\ReferenceName;
 use Neos\ContentRepository\Core\Feature\NodeRemoval\Command\RemoveNodeAggregate;
 use Neos\ContentRepository\Core\Feature\SubtreeTagging\Command\TagSubtree;
 use Neos\ContentRepository\Core\Feature\SubtreeTagging\Command\UntagSubtree;
+use Neos\ContentRepository\Core\Feature\WorkspaceCommandSkipped;
+use Neos\ContentRepository\Core\Feature\WorkspacePublication\Command\PublishIndividualNodesFromWorkspace;
 use Neos\ContentRepository\Core\NodeType\NodeType;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\Projection\ContentGraph\ContentSubgraphInterface;
@@ -39,7 +41,9 @@ use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Neos\Domain\Link\Link;
 use Neos\Flow\Persistence\PersistenceManagerInterface;
+use Psr\Http\Message\UriInterface;
 use Neos\Media\Domain\Repository\AssetRepository;
+use Neos\Neos\Domain\Model\Domain;
 use Neos\Neos\Domain\Model\Site;
 use Neos\Neos\Domain\Model\WorkspaceDescription;
 use Neos\Neos\Domain\Model\WorkspaceRole;
@@ -108,6 +112,11 @@ class ContentRepositoryService
      */
     private ?Site $defaultSite = null;
 
+    /**
+     * Site selected for the current request via selectSite(); null means the default site.
+     */
+    private ?Site $selectedSite = null;
+
     // -------------------------------------------------------------------------
     // Core accessors
     // -------------------------------------------------------------------------
@@ -124,9 +133,149 @@ class ContentRepositoryService
         return $this->defaultSite;
     }
 
+    /**
+     * Select the site that site-scoped operations (site node, page tree, content
+     * repository, default dimension space point, pending changes, publishing) work on.
+     * Null or an empty string selects the default site again.
+     */
+    public function selectSite(?string $siteNodeName): Site
+    {
+        if ($siteNodeName === null || trim($siteNodeName) === '') {
+            $this->selectedSite = null;
+            return $this->getDefaultSite();
+        }
+        $site = $this->siteRepository->findOneByNodeName(trim($siteNodeName));
+        if ($site === null) {
+            throw new \RuntimeException('Site not found: ' . $siteNodeName, 1791540201);
+        }
+        $this->selectedSite = $site;
+        return $site;
+    }
+
+    /**
+     * The site selected via selectSite(), or the default site.
+     */
+    public function getCurrentSite(): Site
+    {
+        return $this->selectedSite ?? $this->getDefaultSite();
+    }
+
+    /**
+     * Whether a site was selected explicitly for this request (as opposed to falling back to the default site).
+     */
+    public function hasSelectedSite(): bool
+    {
+        return $this->selectedSite !== null;
+    }
+
+    /**
+     * All sites of the instance, online and offline, ordered like the Neos site management.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function listSites(): array
+    {
+        $defaultNodeName = null;
+        try {
+            $defaultNodeName = $this->getDefaultSite()->getNodeName()->value;
+        } catch (\RuntimeException $e) {
+            // no online site: nothing is marked as default
+        }
+
+        $result = [];
+        foreach ($this->siteRepository->findAll() as $site) {
+            $result[] = $this->serializeSite($site, $defaultNodeName);
+        }
+        return $result;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function serializeSite(Site $site, ?string $defaultNodeName = null): array
+    {
+        $domains = [];
+        foreach ($site->getDomains() as $domain) {
+            $domains[] = [
+                'domain' => (string)$domain,
+                'active' => (bool)$domain->getActive(),
+            ];
+        }
+        $primaryDomain = $site->getPrimaryDomain();
+
+        $contentRepositoryId = null;
+        $defaultDimensionSpacePoint = null;
+        try {
+            $configuration = $site->getConfiguration();
+            $contentRepositoryId = $configuration->contentRepositoryId->value;
+            $defaultDimensionSpacePoint = $configuration->defaultDimensionSpacePoint->coordinates;
+        } catch (\RuntimeException $e) {
+            // missing Neos.Neos.sites configuration: leave the values empty
+        }
+
+        return [
+            'name' => $site->getName(),
+            'nodeName' => $site->getNodeName()->value,
+            'online' => (bool)$site->isOnline(),
+            'default' => $defaultNodeName !== null && $site->getNodeName()->value === $defaultNodeName,
+            'primaryDomain' => $primaryDomain !== null ? (string)$primaryDomain : null,
+            'domains' => $domains,
+            'contentRepositoryId' => $contentRepositoryId,
+            'defaultDimensionSpacePoint' => $defaultDimensionSpacePoint,
+        ];
+    }
+
+    /**
+     * The closest Neos.Neos:Site node of a node (the node itself if it is a site node).
+     */
+    public function findSiteNodeForNode(Node $node, string $workspace = 'live'): ?Node
+    {
+        return $this->getSubgraph($workspace)->findClosestNode(
+            $node->aggregateId,
+            FindClosestNodeFilter::create(nodeTypes: 'Neos.Neos:Site')
+        );
+    }
+
+    /**
+     * The site a node belongs to, resolved via its site node.
+     */
+    public function findSiteForNode(Node $node, string $workspace = 'live'): ?Site
+    {
+        $siteNode = $this->findSiteNodeForNode($node, $workspace);
+        if ($siteNode === null || $siteNode->name === null) {
+            return null;
+        }
+        return $this->siteRepository->findOneByNodeName($siteNode->name->value);
+    }
+
+    /**
+     * Base URI (scheme, host, port) for frontend links of a site: its primary domain,
+     * falling back to $requestUri when the site has no active domain. Scheme and port
+     * that the domain does not define are taken from $requestUri, so a domain
+     * "azubi.localhost" requested via "http://localhost:8080" becomes "http://azubi.localhost:8080".
+     * A domain with its own scheme but no port uses the default port of that scheme.
+     */
+    public function buildSiteBaseUri(?Domain $domain, UriInterface $requestUri): UriInterface
+    {
+        $base = $requestUri->withPath('')->withQuery('')->withFragment('')->withUserInfo('');
+        if ($domain === null || (string)$domain->getHostname() === '') {
+            return $base;
+        }
+
+        $base = $base->withHost($domain->getHostname());
+        $scheme = $domain->getScheme();
+        if ($scheme && $scheme !== $base->getScheme()) {
+            $base = $base->withScheme($scheme)->withPort(null);
+        }
+        if ($domain->getPort() !== null) {
+            $base = $base->withPort($domain->getPort());
+        }
+        return $base;
+    }
+
     public function getContentRepositoryId(): ContentRepositoryId
     {
-        return $this->getDefaultSite()->getConfiguration()->contentRepositoryId;
+        return $this->getCurrentSite()->getConfiguration()->contentRepositoryId;
     }
 
     public function getContentRepository(): ContentRepository
@@ -142,7 +291,7 @@ class ContentRepositoryService
      */
     public function getDefaultDimensionSpacePoint(): DimensionSpacePoint
     {
-        return $this->getDefaultSite()->getConfiguration()->defaultDimensionSpacePoint;
+        return $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint;
     }
 
     public function getSubgraph(string $workspace = 'live'): ContentSubgraphInterface
@@ -156,7 +305,7 @@ class ContentRepositoryService
     public function getSiteNode(string $workspace = 'live'): Node
     {
         return $this->siteNodeUtility->findSiteNodeBySite(
-            $this->getDefaultSite(),
+            $this->getCurrentSite(),
             WorkspaceName::fromString($workspace),
             $this->getDefaultDimensionSpacePoint()
         );
@@ -445,7 +594,7 @@ class ContentRepositoryService
     // Publishing
     // -------------------------------------------------------------------------
 
-    public function getPendingChanges(string $workspace): array
+    public function getPendingChanges(string $workspace, ?Site $site = null): array
     {
         $changes = $this->workspacePublishingService->pendingWorkspaceChanges(
             $this->getContentRepositoryId(),
@@ -460,6 +609,18 @@ class ContentRepositoryService
             $node = $subgraph->findNodeById($change->nodeAggregateId);
             $liveNode = $liveSubgraph->findNodeById($change->nodeAggregateId);
 
+            // Removed nodes only exist in live, so resolve their site from there.
+            $siteNode = null;
+            if ($node !== null) {
+                $siteNode = $this->findSiteNodeForNode($node, $workspace);
+            } elseif ($liveNode !== null) {
+                $siteNode = $this->findSiteNodeForNode($liveNode, 'live');
+            }
+            $siteNodeName = $siteNode?->name?->value;
+            if ($site !== null && $siteNodeName !== $site->getNodeName()->value) {
+                continue;
+            }
+
             $changeType = 'modified';
             if ($change->created) {
                 $changeType = 'added';
@@ -473,14 +634,37 @@ class ContentRepositoryService
                 'nodeAggregateId' => $change->nodeAggregateId->value,
                 'nodeType' => $node?->nodeTypeName->value ?? 'unknown',
                 'changeType' => $changeType,
+                'site' => $siteNodeName,
             ];
         }
 
         return $result;
     }
 
-    public function publishWorkspace(string $workspace): int
+    public function publishWorkspace(string $workspace, ?Site $site = null): int
     {
+        if ($site !== null) {
+            // Only the changes of this site; changes of other sites stay in the workspace.
+            // Neos' publishChangesInSite() can't attribute nodes that were removed via
+            // RemoveNodeAggregate (they no longer exist in the workspace), so the changes
+            // are attributed here, falling back to live for removed nodes.
+            $nodeIds = array_values(array_unique(array_column($this->getPendingChanges($workspace, $site), 'nodeAggregateId')));
+            if ($nodeIds === []) {
+                return 0;
+            }
+            try {
+                $this->getContentRepository()->handle(
+                    PublishIndividualNodesFromWorkspace::create(
+                        WorkspaceName::fromString($workspace),
+                        NodeAggregateIds::fromArray($nodeIds)
+                    )
+                );
+            } catch (WorkspaceCommandSkipped $e) {
+                return 0;
+            }
+            return count($nodeIds);
+        }
+
         $changes = $this->workspacePublishingService->pendingWorkspaceChanges(
             $this->getContentRepositoryId(),
             WorkspaceName::fromString($workspace)
@@ -971,7 +1155,8 @@ class ContentRepositoryService
     public function buildFrontendPath(Node $node, string $workspace): string
     {
         $subgraph = $this->getSubgraph($workspace);
-        $siteNode = $this->getSiteNode($workspace);
+        // Stop at the node's own site node, so paths are right for nodes of any site.
+        $siteNode = $this->findSiteNodeForNode($node, $workspace) ?? $this->getSiteNode($workspace);
         $segments = [];
         $current = $node;
 

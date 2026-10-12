@@ -146,6 +146,7 @@ Once connected, the AI assistant has access to these capabilities:
 
 | Tool | Description |
 |------|-------------|
+| `neos_list_sites` | List all sites of the Neos instance (name, node name, domains, default site) |
 | `neos_get_site_context` | Get site structure, all node types with properties, and page tree |
 | `neos_list_pages` | List all pages in a workspace |
 | `neos_get_page_content` | Get all content nodes on a specific page |
@@ -174,9 +175,9 @@ Once connected, the AI assistant has access to these capabilities:
 
 | Tool | Description |
 |------|-------------|
-| `neos_get_preview_url` | Generate a 24-hour preview link (no Neos login needed) |
-| `neos_list_pending_changes` | See what has been changed |
-| `neos_publish_changes` | Publish all changes from workspace to live |
+| `neos_get_preview_url` | Generate a 24-hour preview link (no Neos login needed), on the domain of the page's site |
+| `neos_list_pending_changes` | See what has been changed, optionally only for one site |
+| `neos_publish_changes` | Publish all changes from workspace to live, or only those of one site |
 
 ### Typical AI workflow
 
@@ -188,6 +189,24 @@ Once connected, the AI assistant has access to these capabilities:
 5. (human reviews the preview)
 6. neos_publish_changes        → Go live after confirmation
 ```
+
+## Multi-site
+
+A Neos instance can host several sites. The bridge works on the **default site** unless a request names another one:
+
+- `listSites` (tool `neos_list_sites`) returns all sites with name, node name, online state, primary domain and domains, content repository and default dimension space point, and marks the default site.
+- Every endpoint accepts an optional `site` parameter with a site **node name** (e.g. `site=azubi`). It selects the site for the site-scoped parts of the request: site context, page tree, content repository and default dimension space point, pending changes and publishing. An unknown site returns `404`.
+- `getSiteContext` lists the available sites in `sites` and tells the assistant to pass `site` when the instance has more than one.
+- Operations by node id (`getPageContent`, `updateNodeProperty`, `createContentNode`, `moveNode`, …) work on any site of the content repository; `site` is only needed there when sites use **different content repositories or default dimensions**.
+- `getPreviewUrl` builds the link on the primary domain of the page's own site, not on the host the bridge was called with. Scheme and port the domain doesn't define are taken from the bridge request (`second.localhost` called via `http://localhost:8080` becomes `http://second.localhost:8080`).
+- `listPendingChanges` returns the site of each change; with `site` it only returns changes of that site. `publishChanges` with `site` publishes only that site's changes (as `PublishIndividualNodesFromWorkspace`), changes of other sites stay in the workspace. Changes are attributed to a site via the node's site node, for removed nodes via their live counterpart, so removals made through the bridge are published per site as well (Neos' `publishChangesInSite()` can't attribute nodes removed with `RemoveNodeAggregate`). A site without changes publishes nothing and returns `publishedNodes: 0`. Pending entries whose node exists neither in the workspace nor in live have no site and are only published without `site`.
+- The CLI has `./flow mcp:listsites` and a `--site` option on `mcp:sitecontext`, `mcp:listpages`, `mcp:listpendingchanges` and `mcp:publishchanges`.
+
+Without `site`, everything behaves as before. Which site is the default is decided by Neos: `Neos.Neos.defaultSiteNodeName`, or, if that isn't set, the first online site ordered by name.
+
+The MCP workspace exists once per content repository, so sites sharing a content repository also share the review workspace; use `site` on `listPendingChanges` and `publishChanges` to review and publish them separately.
+
+One API token covers the whole instance: it authenticates with the configured roles (`Neos.Neos:Administrator` by default) for all sites. Restricting a token to certain sites is not supported.
 
 ## Entity CRUD (advanced)
 
@@ -325,6 +344,8 @@ The Review tab in the inspector shows:
 
 All endpoints are available under `/neos/mcp/` and accept/return JSON. Every request requires a `Authorization: Bearer <token>` header.
 
+Every endpoint also accepts an optional `site` parameter (a site node name) that selects the site for site-scoped operations, see [Multi-site](#multi-site). Without it the default site is used.
+
 ### Property resolution
 
 `updateNodeProperty`, `createContentNode`, and `createDocumentNode` all resolve property values against the target NodeType's declared property type before writing them:
@@ -343,9 +364,13 @@ References are recognised from the NodeType's `references` configuration (Neos 9
 
 Reading a node returns a `Link` property as `{"href", "title", "target", "rel", "download"}`.
 
+### GET /neos/mcp/listSites
+
+Lists all sites of the instance: `name`, `nodeName`, `online`, `default`, `primaryDomain`, `domains` (`domain`, `active`), `contentRepositoryId`, `defaultDimensionSpacePoint`.
+
 ### GET /neos/mcp/getSiteContext
 
-Returns site info, all node types with properties, and the page tree. Typically the first call an MCP client makes.
+Returns site info, all node types with properties, and the page tree, for the default site or the one passed as `site`. `sites` lists all sites of the instance. Typically the first call an MCP client makes.
 
 ### POST /neos/mcp/setupWorkspace
 
@@ -389,11 +414,11 @@ Remove a node. Parameters: `contextPath` (required), `workspace` (default: `mcp`
 
 ### POST /neos/mcp/listPendingChanges
 
-List unpublished changes. Parameter: `workspace` (default: `mcp`).
+List unpublished changes. Parameters: `workspace` (default: `mcp`), `site` (optional, only changes of that site). Each change contains the node name of its `site`.
 
 ### POST /neos/mcp/getPreviewUrl
 
-Generate a 24-hour preview URL. Parameters: `nodePath` (required), `workspace` (default: `mcp`).
+Generate a 24-hour preview URL. Parameters: `nodePath` (required), `workspace` (default: `mcp`). The URL uses the primary domain of the node's site (falling back to the request host); the response contains the node name of that `site`.
 
 ### GET /neos/mcp/listAssets
 
@@ -448,7 +473,7 @@ Good to know:
 
 ### POST /neos/mcp/publishChanges
 
-Publish all pending changes to live. Parameter: `workspace` (default: `mcp`).
+Publish all pending changes to live. Parameters: `workspace` (default: `mcp`), `site` (optional, publish only the changes of that site).
 
 ### Entity endpoints
 
