@@ -339,7 +339,7 @@ All endpoints are available under `/neos/mcp/` and accept/return JSON. Every req
 | `boolean` | `true`/`false`/`"1"`/`"yes"`/`"on"`/etc. | `bool` |
 | `Neos\Neos\Domain\Link\Link` | URI string (`node://<id>`, `asset://<id>`, `https://…`, `mailto:…`), or an object / JSON string with `href` and optional `title`, `target`, `rel`, `download`. An empty string or `null` clears the link. A `node://` target must exist in the workspace that is written to; other schemes are not checked | `Link` value object |
 
-On create, reference/references properties are applied in a follow-up `SetNodeReferences` command right after the node is created, since they aren't part of `PropertyValuesToWrite`. If an asset or referenced node can't be found, a date string is invalid, a link object has no `href`, or a `node://` link target doesn't exist in the workspace, the call fails with a `500` and a structured `{"error": "..."}` body.
+References are recognised from the NodeType's `references` configuration (Neos 9 migrates legacy `type: reference(s)` properties into it; `maxItems: 1` means a single target). On create, reference/references properties are applied in a follow-up `SetNodeReferences` command right after the node is created, since they aren't part of `PropertyValuesToWrite`. If an asset or referenced node can't be found, a date string is invalid, a link object has no `href`, or a `node://` link target doesn't exist in the workspace, the call fails with a `500` and a structured `{"error": "..."}` body.
 
 Reading a node returns a `Link` property as `{"href", "title", "target", "rel", "download"}`.
 

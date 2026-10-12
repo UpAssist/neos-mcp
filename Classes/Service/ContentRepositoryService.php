@@ -317,14 +317,14 @@ class ContentRepositoryService
         $referenceProperties = [];
 
         foreach ($properties as $propertyName => $rawValue) {
-            $propertyType = $nodeType->getPropertyType($propertyName);
+            $referenceKind = $this->getReferenceKind($nodeType, $propertyName);
 
-            if ($propertyType === 'reference') {
+            if ($referenceKind === 'reference') {
                 $referenceProperties[$propertyName] = $rawValue !== '' && $rawValue !== null ? [$rawValue] : [];
                 continue;
             }
 
-            if ($propertyType === 'references') {
+            if ($referenceKind === 'references') {
                 $referenceProperties[$propertyName] = $this->resolveReferenceIdentifiers($rawValue, $workspace);
                 continue;
             }
@@ -608,6 +608,25 @@ class ContentRepositoryService
     // -------------------------------------------------------------------------
     // Property value resolution
     // -------------------------------------------------------------------------
+
+    /**
+     * Tell whether a name is a reference on the node type, and if so whether it holds
+     * one target ('reference') or many ('references'); null for regular properties.
+     *
+     * In Neos 9 references are no longer properties: legacy `type: reference(s)`
+     * property declarations are migrated into the `references` configuration
+     * (`reference` becomes maxItems 1), so getPropertyType() throws for them.
+     */
+    public function getReferenceKind(NodeType $nodeType, string $name): ?string
+    {
+        if (!$nodeType->hasReference($name)) {
+            return null;
+        }
+
+        return ($nodeType->getReferences()[$name]['constraints']['maxItems'] ?? null) === 1
+            ? 'reference'
+            : 'references';
+    }
 
     /**
      * Resolve a raw property value to the correct PHP type based on the node type schema.

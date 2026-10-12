@@ -505,10 +505,10 @@ class McpBridgeController extends ActionController
             // Check property type for references
             $cr = $this->crService->getContentRepository();
             $nodeType = $cr->getNodeTypeManager()->getNodeType($node->nodeTypeName);
-            $propertyType = $nodeType?->getPropertyType($property);
+            $referenceKind = $nodeType !== null ? $this->crService->getReferenceKind($nodeType, $property) : null;
 
             // Handle reference types via SetNodeReferences command
-            if ($propertyType === 'reference') {
+            if ($referenceKind === 'reference') {
                 $targetIds = $value !== '' ? [$value] : [];
                 $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
                 $this->emitNodeMutated($node, "Property '{$property}' changed");
@@ -521,7 +521,7 @@ class McpBridgeController extends ActionController
                 return;
             }
 
-            if ($propertyType === 'references') {
+            if ($referenceKind === 'references') {
                 $targetIds = $this->crService->resolveReferenceIdentifiers($value, $workspace);
                 $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
                 $this->emitNodeMutated($node, "Property '{$property}' changed");
