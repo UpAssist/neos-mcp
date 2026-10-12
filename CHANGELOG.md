@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.2.0](https://github.com/UpAssist/neos-mcp/compare/2.1.0...2.2.0) (2026-10-12)
+
+
+### Features
+
+* support Neos\Neos\Domain\Link\Link properties ([#8](https://github.com/UpAssist/neos-mcp/issues/8)) ([0190ce1](https://github.com/UpAssist/neos-mcp/commit/0190ce1ef9bbb52f7c6305ea86bcab04c8d3dc06))
+
+
+### Bug Fixes
+
+* set references on Neos 9 by reading the references configuration ([ceb017c](https://github.com/UpAssist/neos-mcp/commit/ceb017c944be2b610351fa80c636fca019cccf8b))
+
 ## [2.1.0](https://github.com/UpAssist/neos-mcp/compare/2.0.8...2.1.0) (2026-10-08)
 
 
