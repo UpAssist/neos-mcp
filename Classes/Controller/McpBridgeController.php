@@ -118,25 +118,73 @@ class McpBridgeController extends ActionController
         }
     }
 
+    /**
+     * Every endpoint accepts an optional "site" argument (site node name) that selects
+     * the site for site-scoped operations: site context, page tree, content repository
+     * and dimensions, pending changes and publishing. Without it the default site is used.
+     */
+    protected function initializeAction(): void
+    {
+        parent::initializeAction();
+        $this->crService->selectSite(null);
+
+        if (!$this->request->hasArgument('site')) {
+            return;
+        }
+        $site = $this->request->getArgument('site');
+        if (!is_string($site) || trim($site) === '') {
+            return;
+        }
+
+        $this->checkAuth();
+        try {
+            $this->crService->selectSite($site);
+        } catch (\RuntimeException $e) {
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => $e->getMessage()]));
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Actions
     // -------------------------------------------------------------------------
+
+    /** @Flow\SkipCsrfProtection */
+    public function listSitesAction(): void
+    {
+        $this->checkAuth();
+        $sites = $this->crService->listSites();
+        $this->view->assign('value', ['count' => count($sites), 'sites' => $sites]);
+    }
 
     /** @Flow\SkipCsrfProtection */
     public function getSiteContextAction(): void
     {
         $this->checkAuth();
 
-        $site = $this->crService->getDefaultSite();
+        $site = $this->crService->getCurrentSite();
         $siteNode = $this->crService->getSiteNode('live');
         $nodeTypes = $this->crService->getNodeTypes('all');
         $pages = $this->crService->collectDocumentNodes($siteNode, 'live', includeProperties: false);
+
+        $sites = array_map(
+            static fn (array $s): array => array_intersect_key($s, array_flip(['name', 'nodeName', 'online', 'default', 'primaryDomain'])),
+            $this->crService->listSites()
+        );
+        $multiSiteHint = count($sites) > 1
+            ? sprintf(
+                ' This Neos instance has %d sites; this context is for "%s". ' .
+                'Pass "site" (a site node name from "sites") to work on another site.',
+                count($sites),
+                $site->getNodeName()->value
+            )
+            : '';
 
         $this->view->assign('value', [
             'apiVersion' => 2,
             'siteName' => $site->getName(),
             'siteNodeName' => $site->getNodeName()->value,
             'siteNodeAggregateId' => $siteNode->aggregateId->value,
+            'sites' => $sites,
             'mcpWorkspace' => $this->mcpWorkspaceName,
             'nodeTypes' => $nodeTypes,
             'pages' => $pages,
@@ -146,7 +194,7 @@ class McpBridgeController extends ActionController
                 'Use neos_get_preview_url to get a preview link without logging in to Neos. ' .
                 'Only call neos_publish_changes after the user explicitly confirms they want to go live.',
                 $this->mcpWorkspaceName
-            ),
+            ) . $multiSiteHint,
         ]);
     }
 
@@ -251,9 +299,11 @@ class McpBridgeController extends ActionController
             return;
         }
 
-        $changes = $this->crService->getPendingChanges($workspace);
+        $site = $this->crService->hasSelectedSite() ? $this->crService->getCurrentSite() : null;
+        $changes = $this->crService->getPendingChanges($workspace, $site);
         $this->view->assign('value', [
             'workspace' => $workspace,
+            'site' => $site?->getNodeName()->value,
             'count' => count($changes),
             'pendingChanges' => $changes,
         ]);
@@ -283,12 +333,18 @@ class McpBridgeController extends ActionController
         ]);
         $this->previewTokensCache->set($token, $payload);
 
-        $baseUrl = rtrim((string) $this->request->getHttpRequest()->getUri()->withPath('')->withQuery('')->withFragment(''), '/');
+        // Use the domain of the node's own site, not the host the bridge was called on.
+        $site = $this->crService->findSiteForNode($node, $workspace);
+        $baseUrl = rtrim((string) $this->crService->buildSiteBaseUri(
+            $site?->getPrimaryDomain(),
+            $this->request->getHttpRequest()->getUri()
+        ), '/');
         $frontendPath = $this->crService->buildFrontendPath($node, $workspace);
         $previewUrl = $baseUrl . $frontendPath . '?_mcpPreview=' . $token;
 
         $this->view->assign('value', [
             'previewUrl' => $previewUrl,
+            'site' => $site?->getNodeName()->value,
             'token' => $token,
             'workspace' => $workspace,
             'nodeAggregateId' => $nodeAggregateId,
@@ -587,12 +643,14 @@ class McpBridgeController extends ActionController
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Workspace not found: ' . $workspace]));
         }
 
-        $count = $this->crService->publishWorkspace($workspace);
+        $site = $this->crService->hasSelectedSite() ? $this->crService->getCurrentSite() : null;
+        $count = $this->crService->publishWorkspace($workspace, $site);
 
         $this->view->assign('value', [
             'success' => true,
             'publishedNodes' => $count,
             'workspace' => $workspace,
+            'site' => $site?->getNodeName()->value,
             'targetWorkspace' => 'live',
         ]);
     }

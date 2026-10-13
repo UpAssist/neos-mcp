@@ -39,19 +39,31 @@ class McpCommandController extends CommandController
     protected $mcpWorkspaceDescription;
 
     /**
-     * Show site context: site info, node types, and page tree
+     * List all sites of the instance
      */
-    public function siteContextCommand(): void
+    public function listSitesCommand(): void
     {
-        $site = $this->crService->getDefaultSite();
+        $sites = $this->crService->listSites();
+        $this->outputJson(['count' => count($sites), 'sites' => $sites]);
+    }
+
+    /**
+     * Show site context: site info, node types, and page tree
+     *
+     * @param string $site Site node name; defaults to the default site
+     */
+    public function siteContextCommand(string $site = ''): void
+    {
+        $this->selectSiteOrQuit($site);
+        $currentSite = $this->crService->getCurrentSite();
         $siteNode = $this->crService->getSiteNode('live');
         $nodeTypes = $this->crService->getNodeTypes('all');
         $pages = $this->crService->collectDocumentNodes($siteNode, 'live');
 
         $this->outputJson([
             'apiVersion' => 2,
-            'siteName' => $site->getName(),
-            'siteNodeName' => $site->getNodeName()->value,
+            'siteName' => $currentSite->getName(),
+            'siteNodeName' => $currentSite->getNodeName()->value,
             'siteNodeAggregateId' => $siteNode->aggregateId->value,
             'mcpWorkspace' => $this->mcpWorkspaceName,
             'nodeTypes' => $nodeTypes,
@@ -61,9 +73,13 @@ class McpCommandController extends CommandController
 
     /**
      * List all document pages
+     *
+     * @param string $workspace Workspace name
+     * @param string $site Site node name; defaults to the default site
      */
-    public function listPagesCommand(string $workspace = 'mcp'): void
+    public function listPagesCommand(string $workspace = 'mcp', string $site = ''): void
     {
+        $this->selectSiteOrQuit($site);
         $siteNode = $this->crService->getSiteNode($workspace);
         $pages = $this->crService->collectDocumentNodes($siteNode, $workspace);
         $this->outputJson(['pages' => $pages]);
@@ -215,24 +231,44 @@ class McpCommandController extends CommandController
 
     /**
      * List pending changes in a workspace
+     *
+     * @param string $workspace Workspace name
+     * @param string $site Only list changes of this site (site node name)
      */
-    public function listPendingChangesCommand(string $workspace = 'mcp'): void
+    public function listPendingChangesCommand(string $workspace = 'mcp', string $site = ''): void
     {
+        $this->selectSiteOrQuit($site);
         if (!$this->crService->workspaceExists($workspace)) {
             $this->outputJson(['pendingChanges' => [], 'workspace' => $workspace, 'count' => 0]);
             return;
         }
-        $changes = $this->crService->getPendingChanges($workspace);
-        $this->outputJson(['workspace' => $workspace, 'count' => count($changes), 'pendingChanges' => $changes]);
+        $selectedSite = $this->crService->hasSelectedSite() ? $this->crService->getCurrentSite() : null;
+        $changes = $this->crService->getPendingChanges($workspace, $selectedSite);
+        $this->outputJson(['workspace' => $workspace, 'site' => $selectedSite?->getNodeName()->value, 'count' => count($changes), 'pendingChanges' => $changes]);
     }
 
     /**
      * Publish all pending changes from a workspace to live
+     *
+     * @param string $workspace Workspace name
+     * @param string $site Only publish changes of this site (site node name)
      */
-    public function publishChangesCommand(string $workspace = 'mcp'): void
+    public function publishChangesCommand(string $workspace = 'mcp', string $site = ''): void
     {
-        $count = $this->crService->publishWorkspace($workspace);
-        $this->outputJson(['success' => true, 'publishedNodes' => $count, 'workspace' => $workspace, 'targetWorkspace' => 'live']);
+        $this->selectSiteOrQuit($site);
+        $selectedSite = $this->crService->hasSelectedSite() ? $this->crService->getCurrentSite() : null;
+        $count = $this->crService->publishWorkspace($workspace, $selectedSite);
+        $this->outputJson(['success' => true, 'publishedNodes' => $count, 'workspace' => $workspace, 'site' => $selectedSite?->getNodeName()->value, 'targetWorkspace' => 'live']);
+    }
+
+    private function selectSiteOrQuit(string $site): void
+    {
+        try {
+            $this->crService->selectSite($site);
+        } catch (\RuntimeException $e) {
+            $this->outputJson(['error' => $e->getMessage()]);
+            $this->quit(1);
+        }
     }
 
     /**
