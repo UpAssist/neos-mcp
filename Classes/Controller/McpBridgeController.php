@@ -26,6 +26,7 @@ use Neos\Media\Domain\Model\AssetCollection;
 use Neos\Media\Domain\Model\ImageInterface;
 use Neos\Cache\Frontend\StringFrontend;
 use UpAssist\Neos\Mcp\Service\NodePropertyResolutionException;
+use UpAssist\Neos\Mcp\Service\SiteService;
 
 class McpBridgeController extends ActionController
 {
@@ -62,6 +63,12 @@ class McpBridgeController extends ActionController
      * @var SiteRepository
      */
     protected $siteRepository;
+
+    /**
+     * @Flow\Inject
+     * @var SiteService
+     */
+    protected $siteService;
 
     /**
      * @Flow\Inject
@@ -155,6 +162,32 @@ class McpBridgeController extends ActionController
         }
     }
 
+    /**
+     * Every endpoint accepts an optional "site" argument (site node name) that selects
+     * the site for site-scoped operations: site context, page tree, pending changes and
+     * publishing. Without it the default site is used.
+     */
+    protected function initializeAction(): void
+    {
+        parent::initializeAction();
+        $this->siteService->selectSite(null);
+
+        if (!$this->request->hasArgument('site')) {
+            return;
+        }
+        $site = $this->request->getArgument('site');
+        if (!is_string($site) || trim($site) === '') {
+            return;
+        }
+
+        $this->checkAuth();
+        try {
+            $this->siteService->selectSite($site);
+        } catch (\RuntimeException $e) {
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => $e->getMessage()]));
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -187,11 +220,30 @@ class McpBridgeController extends ActionController
 
     private function getSiteNodePath(): string
     {
-        $site = $this->siteRepository->findDefault();
+        $site = $this->siteService->getCurrentSite();
         if ($site === null) {
             $this->throwStatus(500, 'No site found', json_encode(['error' => 'No default site found']));
         }
         return '/sites/' . $site->getNodeName();
+    }
+
+    /**
+     * Unpublished nodes of a workspace, optionally limited to one site (attributed via the
+     * /sites/<node name> prefix of the node path).
+     *
+     * @return NodeInterface[]
+     */
+    private function unpublishedNodesOfSite(Workspace $workspace, ?\Neos\Neos\Domain\Model\Site $site): array
+    {
+        $unpublished = $this->publishingService->getUnpublishedNodes($workspace);
+        if ($site === null) {
+            return $unpublished;
+        }
+        $siteNodeName = (string)$site->getNodeName();
+        return array_values(array_filter(
+            $unpublished,
+            fn (NodeInterface $node): bool => $this->siteService->siteNodeNameForPath($node->getPath()) === $siteNodeName
+        ));
     }
 
     private function createContext(string $workspace = 'live'): \Neos\ContentRepository\Domain\Service\Context
@@ -326,12 +378,20 @@ class McpBridgeController extends ActionController
     // -------------------------------------------------------------------------
 
     /** @Flow\SkipCsrfProtection */
+    public function listSitesAction(): void
+    {
+        $this->checkAuth();
+        $sites = $this->siteService->listSites();
+        $this->view->assign('value', ['count' => count($sites), 'sites' => $sites]);
+    }
+
+    /** @Flow\SkipCsrfProtection */
     public function getSiteContextAction(): void
     {
         $this->checkAuth();
 
-        $site = $this->siteRepository->findDefault();
-        $siteNodePath = '/sites/' . $site->getNodeName();
+        $siteNodePath = $this->getSiteNodePath();
+        $site = $this->siteService->getCurrentSite();
         $context = $this->createContext('live');
         $siteNode = $context->getNode($siteNodePath);
 
@@ -361,10 +421,24 @@ class McpBridgeController extends ActionController
 
         $pages = $siteNode ? $this->collectDocumentNodes($siteNode) : [];
 
+        $sites = array_map(
+            static fn (array $s): array => array_intersect_key($s, array_flip(['name', 'nodeName', 'online', 'default', 'primaryDomain'])),
+            $this->siteService->listSites()
+        );
+        $multiSiteHint = count($sites) > 1
+            ? sprintf(
+                ' This Neos instance has %d sites; this context is for "%s". ' .
+                'Pass "site" (a site node name from "sites") to work on another site.',
+                count($sites),
+                $site->getNodeName()
+            )
+            : '';
+
         $this->view->assign('value', [
             'siteName' => $site->getName(),
             'siteNodeName' => $site->getNodeName(),
             'siteNodePath' => $siteNodePath,
+            'sites' => $sites,
             'mcpWorkspace' => $this->mcpWorkspaceName,
             'nodeTypes' => $nodeTypes,
             'pages' => $pages,
@@ -374,7 +448,7 @@ class McpBridgeController extends ActionController
                 'Use neos_get_preview_url to get a preview link without logging in to Neos. ' .
                 'Only call neos_publish_changes after the user explicitly confirms they want to go live.',
                 $this->mcpWorkspaceName
-            ),
+            ) . $multiSiteHint,
         ]);
     }
 
@@ -496,7 +570,8 @@ class McpBridgeController extends ActionController
             $this->view->assign('value', ['pendingChanges' => [], 'workspace' => $workspace]);
             return;
         }
-        $unpublished = $this->publishingService->getUnpublishedNodes($workspaceObject);
+        $site = $this->siteService->hasSelectedSite() ? $this->siteService->getCurrentSite() : null;
+        $unpublished = $this->unpublishedNodesOfSite($workspaceObject, $site);
         $changes = [];
         foreach ($unpublished as $node) {
             $shadowNode = null;
@@ -512,10 +587,12 @@ class McpBridgeController extends ActionController
                 'path' => $node->getPath(),
                 'nodeType' => $node->getNodeType()->getName(),
                 'changeType' => $shadowNode === null ? 'added' : ($node->isRemoved() ? 'removed' : 'modified'),
+                'site' => $this->siteService->siteNodeNameForPath($node->getPath()),
             ];
         }
         $this->view->assign('value', [
             'workspace' => $workspace,
+            'site' => $site?->getNodeName(),
             'count' => count($changes),
             'pendingChanges' => $changes,
         ]);
@@ -540,12 +617,17 @@ class McpBridgeController extends ActionController
         ]);
         $this->previewTokensCache->set($token, $payload);
 
-        $baseUrl = rtrim((string) $this->request->getHttpRequest()->getUri()->withPath('')->withQuery('')->withFragment(''), '/');
+        // Use the domain of the node's own site, not the host the bridge was called on.
+        $site = $this->siteService->findSiteForPath($nodePath);
+        $baseUrl = rtrim((string) $this->siteService->buildSiteBaseUri(
+            $site?->getPrimaryDomain(),
+            $this->request->getHttpRequest()->getUri()
+        ), '/');
 
         // Build the frontend URL using uriPathSegment properties (not node names)
         $context = $this->createContext($workspace);
         $node = $context->getNode($nodePath);
-        $siteNodePath = $this->getSiteNodePath();
+        $siteNodePath = $site !== null ? '/sites/' . $site->getNodeName() : $this->getSiteNodePath();
         $segments = [];
         $current = $node;
         while ($current !== null && $current->getPath() !== $siteNodePath) {
@@ -561,6 +643,7 @@ class McpBridgeController extends ActionController
 
         $this->view->assign('value', [
             'previewUrl' => $previewUrl,
+            'site' => $site !== null ? (string)$site->getNodeName() : null,
             'token' => $token,
             'workspace' => $workspace,
             'nodePath' => $nodePath,
@@ -833,16 +916,22 @@ class McpBridgeController extends ActionController
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Workspace not found: ' . $workspace]));
         }
 
-        $unpublished = $this->publishingService->getUnpublishedNodes($workspaceObject);
+        // With a selected site only that site's changes are published; the changes
+        // of other sites stay in the workspace.
+        $site = $this->siteService->hasSelectedSite() ? $this->siteService->getCurrentSite() : null;
+        $unpublished = $this->unpublishedNodesOfSite($workspaceObject, $site);
         $count = count($unpublished);
 
-        $this->publishingService->publishNodes($unpublished);
-        $this->persistenceManager->persistAll();
+        if ($count > 0) {
+            $this->publishingService->publishNodes($unpublished);
+            $this->persistenceManager->persistAll();
+        }
 
         $this->view->assign('value', [
             'success' => true,
             'publishedNodes' => $count,
             'workspace' => $workspace,
+            'site' => $site?->getNodeName(),
             'targetWorkspace' => 'live',
         ]);
     }

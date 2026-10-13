@@ -193,6 +193,25 @@ Once connected, the AI assistant has access to these capabilities:
 6. neos_publish_changes        → Go live after confirmation
 ```
 
+## Multi-site
+
+A Neos instance can host several sites. The bridge works on the **default site** unless a request names another one:
+
+- `listSites` (tool `neos_list_sites`) returns all sites with name, node name, online state, primary domain and domains, and marks the default site.
+- Every endpoint accepts an optional `site` parameter with a site **node name** (e.g. `site=azubi`). It selects the site for the site-scoped parts of the request: site context, page tree, pending changes and publishing. An unknown site returns `404`.
+- `getSiteContext` lists the available sites in `sites` and tells the assistant to pass `site` when the instance has more than one.
+- Operations by node path or context path (`getPageContent`, `updateNodeProperty`, `createContentNode`, `moveNode`, …) work on any site; `site` is not needed there.
+- `getPreviewUrl` builds the link on the primary domain of the page's own site, not on the host the bridge was called with. Scheme and port the domain doesn't define are taken from the bridge request (`second.localhost` called via `http://localhost:8080` becomes `http://second.localhost:8080`).
+- `listPendingChanges` returns the site of each change; with `site` it only returns changes of that site. `publishChanges` with `site` publishes only that site's changes, changes of other sites stay in the workspace. Changes are attributed to a site through the `/sites/<site node name>` prefix of the node path. A site without changes publishes nothing and returns `publishedNodes: 0`.
+
+Without `site`, everything behaves as before. Which site is the default is decided by Neos: `Neos.Neos.defaultSiteNodeName`, or, if that isn't set, the first online site ordered by name.
+
+**Publishing without `site` publishes the changes of all sites.** A bridge older than 1.2 ignores `site`, so the client checks that `listSites` works before it publishes with `site`.
+
+The MCP workspace is shared by all sites, so use `site` on `listPendingChanges` and `publishChanges` to review and publish them separately.
+
+One API token covers the whole instance: it authenticates with the configured roles (`Neos.Neos:Administrator` by default) for all sites. Restricting a token to certain sites is not supported.
+
 ## Entity CRUD (advanced)
 
 Beyond Neos content nodes, the bridge can also expose custom Doctrine entities for CRUD operations. This is useful for managing data stored in custom database tables (e.g. notifications, form submissions, product data).
@@ -328,6 +347,8 @@ The Review tab in the inspector shows:
 <summary>Full REST API documentation</summary>
 
 All endpoints are available under `/neos/mcp/` and accept/return JSON. Every request requires a `Authorization: Bearer <token>` header.
+
+Every endpoint also accepts an optional `site` parameter (a site node name) that selects the site for site-scoped operations, see [Multi-site](#multi-site). Without it the default site is used.
 
 ### Property resolution
 
@@ -505,6 +526,14 @@ FLOW_CONTEXT=Testing bin/phpunit \
 - The tests need their own database. Configure it in the distribution's `Configuration/Testing/Settings.yaml` (`Neos.Flow.persistence.backendOptions`) and never point it at a database with real content.
 - The package ships `Configuration/Testing/Settings.yaml`, which sets a fixed API token for the test run. It only applies in the `Testing` context.
 - Running the whole functional suite of a distribution that also contains other packages' functional tests can fail on their missing dev dependencies (for example `neos/behat`). In that case run the tests from a clean `neos/neos-base-distribution` that requires this package.
+
+The unit tests cover the site selection (`Tests/Unit/Service/SiteServiceTest.php`) without a database:
+
+```bash
+bin/phpunit \
+  -c Build/BuildEssentials/PhpUnit/UnitTests.xml \
+  Packages/Application/UpAssist.Neos.Mcp/Tests/Unit
+```
 
 ## License
 
