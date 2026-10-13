@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.3.0](https://github.com/UpAssist/neos-mcp/compare/2.2.0...2.3.0) (2026-10-13)
+
+
+### Features
+
+* support multi-site Neos instances ([#9](https://github.com/UpAssist/neos-mcp/issues/9)) ([fd3c3ce](https://github.com/UpAssist/neos-mcp/commit/fd3c3ceca4c88e30a31dec1f00542102ece4442b))
+
 ## [2.2.0](https://github.com/UpAssist/neos-mcp/compare/2.1.0...2.2.0) (2026-10-12)
 
 
