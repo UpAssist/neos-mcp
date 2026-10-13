@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/UpAssist/neos-mcp/compare/1.1.0...1.2.0) (2026-10-13)
+
+
+### Features
+
+* support multi-site Neos instances (port of [#9](https://github.com/UpAssist/neos-mcp/issues/9) to neos-8) ([299451d](https://github.com/UpAssist/neos-mcp/commit/299451d7a061393f84b0c4c1410b9cda2531b5f1))
+
 ## [1.1.0](https://github.com/UpAssist/neos-mcp/compare/1.0.3...1.1.0) (2026-10-08)
 
 
