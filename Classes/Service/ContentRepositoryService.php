@@ -56,6 +56,9 @@ use Neos\Neos\Domain\Model\WorkspaceTitle;
 use Neos\Neos\Domain\Repository\SiteRepository;
 use Neos\Neos\Domain\Service\SiteNodeUtility;
 use Neos\Neos\Domain\Service\WorkspacePublishingService;
+use Neos\Flow\Mvc\Routing\Dto\UriConstraints;
+use Neos\Neos\FrontendRouting\DimensionResolution\DelegatingResolver;
+use Neos\Neos\FrontendRouting\Projection\DocumentNodeInfo;
 use Neos\Neos\Domain\Service\WorkspaceService;
 use Neos\Neos\Domain\SubtreeTagging\NeosSubtreeTag;
 
@@ -96,6 +99,12 @@ class ContentRepositoryService
      * @var WorkspacePublishingService
      */
     protected $workspacePublishingService;
+
+    /**
+     * @Flow\Inject
+     * @var DelegatingResolver
+     */
+    protected $dimensionResolver;
 
     /**
      * @Flow\Inject
@@ -889,7 +898,7 @@ class ContentRepositoryService
     // Publishing
     // -------------------------------------------------------------------------
 
-    public function getPendingChanges(string $workspace, ?Site $site = null): array
+    public function getPendingChanges(string $workspace, ?Site $site = null, bool $allDimensions = false): array
     {
         $changes = $this->workspacePublishingService->pendingWorkspaceChanges(
             $this->getContentRepositoryId(),
@@ -901,6 +910,15 @@ class ContentRepositoryService
         $result = [];
 
         foreach ($changes as $change) {
+            // With requested dimensions only the changes made in those dimensions (and aggregate wide changes).
+            if (
+                !$allDimensions
+                && $this->requestedDimensionSpacePoint !== null
+                && $change->originDimensionSpacePoint !== null
+                && $change->originDimensionSpacePoint->coordinates !== $this->requestedDimensionSpacePoint->coordinates
+            ) {
+                continue;
+            }
             $node = $subgraph->findNodeById($change->nodeAggregateId);
             $liveNode = $liveSubgraph->findNodeById($change->nodeAggregateId);
 
@@ -930,6 +948,7 @@ class ContentRepositoryService
                 'nodeType' => $node?->nodeTypeName->value ?? 'unknown',
                 'changeType' => $changeType,
                 'site' => $siteNodeName,
+                'dimensions' => $change->originDimensionSpacePoint?->coordinates,
             ];
         }
 
@@ -972,6 +991,61 @@ class ContentRepositoryService
         );
 
         return $count;
+    }
+
+    /**
+     * Publish the changes of the requested dimensions. Neos publishes whole node aggregates, so a
+     * node that also has pending changes in another dimension cannot be published without
+     * publishing those too: it is skipped and reported instead.
+     *
+     * @return array{published: int, skipped: array<int, array<string, mixed>>}
+     */
+    public function publishRequestedDimensions(string $workspace, ?Site $site = null): array
+    {
+        if ($this->requestedDimensionSpacePoint === null) {
+            throw new \LogicException('No dimensions requested', 1791540302);
+        }
+        $requested = $this->requestedDimensionSpacePoint->coordinates;
+
+        $byAggregate = [];
+        foreach ($this->getPendingChanges($workspace, $site, true) as $change) {
+            $byAggregate[$change['nodeAggregateId']][] = $change;
+        }
+
+        $publishable = [];
+        $skipped = [];
+        foreach ($byAggregate as $aggregateId => $changes) {
+            $dimensions = array_map(static fn (array $c): ?array => $c['dimensions'], $changes);
+            $others = array_values(array_filter($dimensions, static fn (?array $d): bool => $d !== null && $d !== $requested));
+            $inRequested = array_filter($dimensions, static fn (?array $d): bool => $d === null || $d === $requested);
+            if ($inRequested === []) {
+                continue;
+            }
+            if ($others !== []) {
+                $skipped[] = [
+                    'nodeAggregateId' => $aggregateId,
+                    'reason' => 'Also has pending changes in other dimensions; Neos publishes whole nodes. Publish without "dimensions" to publish all dimensions of this node.',
+                    'otherDimensions' => $others,
+                ];
+                continue;
+            }
+            $publishable[] = (string)$aggregateId;
+        }
+
+        if ($publishable === []) {
+            return ['published' => 0, 'skipped' => $skipped];
+        }
+        try {
+            $this->getContentRepository()->handle(
+                PublishIndividualNodesFromWorkspace::create(
+                    WorkspaceName::fromString($workspace),
+                    NodeAggregateIds::fromArray($publishable)
+                )
+            );
+        } catch (WorkspaceCommandSkipped $e) {
+            return ['published' => 0, 'skipped' => $skipped];
+        }
+        return ['published' => count($publishable), 'skipped' => $skipped];
     }
 
     // -------------------------------------------------------------------------
@@ -1465,6 +1539,33 @@ class ContentRepositoryService
             $current = $subgraph->findParentNode($current->aggregateId);
         }
 
-        return '/' . implode('/', $segments);
+        $path = '/' . implode('/', $segments);
+        // With explicit dimensions the URL carries the prefix the site's dimension resolver puts there (e.g. /uk).
+        $prefix = $this->requestedDimensionSpacePoint !== null ? $this->dimensionUriPathPrefix($siteNode, $node) : '';
+        if ($prefix !== '') {
+            $path = '/' . $prefix . ($path === '/' ? '' : $path);
+        }
+        return $path;
+    }
+
+    /**
+     * The URI path prefix of the requested dimensions as configured by the site's dimension
+     * resolver (without slashes), or '' if it adds none.
+     */
+    private function dimensionUriPathPrefix(Node $siteNode, Node $node): string
+    {
+        try {
+            $site = $this->findSiteForNode($node) ?? $this->getCurrentSite();
+            $isHomepage = $node->aggregateId->equals($siteNode->aggregateId);
+            $constraints = $this->dimensionResolver->fromDimensionSpacePointToUriConstraints(
+                $this->requestedDimensionSpacePoint,
+                new DocumentNodeInfo(['uripath' => $isHomepage ? '' : 'page']),
+                $site,
+                UriConstraints::create()
+            );
+            return trim($constraints->toUri()->getPath(), '/');
+        } catch (\Throwable $e) {
+            return '';
+        }
     }
 }

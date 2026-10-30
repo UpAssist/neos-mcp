@@ -339,6 +339,7 @@ class McpBridgeController extends ActionController
         $this->view->assign('value', [
             'workspace' => $workspace,
             'site' => $site?->getNodeName()->value,
+            'dimensions' => $this->crService->hasRequestedDimensions() ? $this->crService->getDefaultDimensionSpacePoint()->coordinates : null,
             'count' => count($changes),
             'pendingChanges' => $changes,
         ]);
@@ -729,15 +730,27 @@ class McpBridgeController extends ActionController
         }
 
         $site = $this->crService->hasSelectedSite() ? $this->crService->getCurrentSite() : null;
-        $count = $this->crService->publishWorkspace($workspace, $site);
+        $skipped = [];
+        if ($this->crService->hasRequestedDimensions()) {
+            $result = $this->crService->publishRequestedDimensions($workspace, $site);
+            $count = $result['published'];
+            $skipped = $result['skipped'];
+        } else {
+            $count = $this->crService->publishWorkspace($workspace, $site);
+        }
 
-        $this->view->assign('value', [
+        $value = [
             'success' => true,
             'publishedNodes' => $count,
             'workspace' => $workspace,
             'site' => $site?->getNodeName()->value,
             'targetWorkspace' => 'live',
-        ]);
+        ];
+        if ($this->crService->hasRequestedDimensions()) {
+            $value['dimensions'] = $this->crService->getDefaultDimensionSpacePoint()->coordinates;
+            $value['skippedNodes'] = $skipped;
+        }
+        $this->view->assign('value', $value);
     }
 
     // -------------------------------------------------------------------------
