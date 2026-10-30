@@ -19,6 +19,7 @@ use Neos\Media\Domain\Repository\AssetRepository;
 use Neos\Media\Domain\Repository\TagRepository;
 use Neos\Media\Domain\Strategy\AssetModelMappingStrategyInterface;
 use UpAssist\Neos\Mcp\Service\ContentRepositoryService;
+use UpAssist\Neos\Mcp\Service\DimensionConflictException;
 
 class McpBridgeController extends ActionController
 {
@@ -127,21 +128,54 @@ class McpBridgeController extends ActionController
     {
         parent::initializeAction();
         $this->crService->selectSite(null);
+        $this->crService->selectDimensions(null);
 
-        if (!$this->request->hasArgument('site')) {
-            return;
-        }
-        $site = $this->request->getArgument('site');
-        if (!is_string($site) || trim($site) === '') {
-            return;
+        if ($this->request->hasArgument('site')) {
+            $site = $this->request->getArgument('site');
+            if (is_string($site) && trim($site) !== '') {
+                $this->checkAuth();
+                try {
+                    $this->crService->selectSite($site);
+                } catch (\RuntimeException $e) {
+                    $this->throwStatus(404, 'Not Found', json_encode(['error' => $e->getMessage()]));
+                }
+            }
         }
 
-        $this->checkAuth();
-        try {
-            $this->crService->selectSite($site);
-        } catch (\RuntimeException $e) {
-            $this->throwStatus(404, 'Not Found', json_encode(['error' => $e->getMessage()]));
+        if ($this->request->hasArgument('dimensions')) {
+            $this->checkAuth();
+            $dimensions = $this->parseDimensionsArgument($this->request->getArgument('dimensions'));
+            try {
+                $this->crService->selectDimensions($dimensions);
+            } catch (\InvalidArgumentException $e) {
+                $this->throwStatus(400, 'Bad Request', json_encode(['error' => $e->getMessage()]));
+            }
         }
+    }
+
+    /**
+     * The "dimensions" argument as dimension name => value: an array, or a JSON object string
+     * such as {"language":"nl"}. Null when empty.
+     *
+     * @return array<string, string>|null
+     */
+    private function parseDimensionsArgument(mixed $raw): ?array
+    {
+        if (is_string($raw)) {
+            $raw = trim($raw);
+            if ($raw === '') {
+                return null;
+            }
+            $decoded = json_decode($raw, true);
+            if (!is_array($decoded)) {
+                $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'dimensions must be a JSON object such as {"language":"nl"}']));
+            }
+            $raw = $decoded;
+        }
+        if (!is_array($raw)) {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'dimensions must be an object such as {"language":"nl"}']));
+        }
+        return $raw === [] ? null : $raw;
     }
 
     // -------------------------------------------------------------------------
@@ -181,6 +215,7 @@ class McpBridgeController extends ActionController
 
         $this->view->assign('value', [
             'apiVersion' => 2,
+            'dimensions' => $this->crService->describeDimensions(),
             'siteName' => $site->getName(),
             'siteNodeName' => $site->getNodeName()->value,
             'siteNodeAggregateId' => $siteNode->aggregateId->value,
@@ -390,6 +425,8 @@ class McpBridgeController extends ActionController
                 'success' => true,
                 'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
             ]);
+        } catch (DimensionConflictException $e) {
+            $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -457,6 +494,8 @@ class McpBridgeController extends ActionController
                 'success' => true,
                 'node' => $newNode !== null ? $this->crService->serializeNode($newNode, $subgraph) : ['nodeAggregateId' => $newNodeId->value],
             ]);
+        } catch (DimensionConflictException $e) {
+            $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -504,6 +543,8 @@ class McpBridgeController extends ActionController
                 'success' => true,
                 'nodeAggregateId' => $nodeAggregateId,
             ]);
+        } catch (DimensionConflictException $e) {
+            $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -606,6 +647,8 @@ class McpBridgeController extends ActionController
                 'property' => $property,
                 'newValue' => $displayValue,
             ]);
+        } catch (DimensionConflictException $e) {
+            $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -629,10 +672,52 @@ class McpBridgeController extends ActionController
         $this->emitNodeMutated($node, 'Element removed');
         $this->crService->removeNode($workspace, $nodeAggregateId);
 
-        $this->view->assign('value', [
+        $value = [
             'success' => true,
             'removedNodeAggregateId' => $nodeAggregateId,
-        ]);
+        ];
+        if ($this->crService->hasRequestedDimensions()) {
+            $value['removedFromDimensions'] = $this->crService->getDefaultDimensionSpacePoint()->coordinates;
+            $value['storedInDimensions'] = $node->originDimensionSpacePoint->coordinates;
+        }
+        $this->view->assign('value', $value);
+    }
+
+    /**
+     * Creates a variant of a node in the dimensions given by the "dimensions" argument, starting
+     * from the node as it exists in "sourceDimensions" (default: the default dimensions).
+     * mode "copy" copies properties and content; mode "empty" creates the variant without
+     * properties and content.
+     *
+     * @Flow\SkipCsrfProtection
+     */
+    public function createNodeVariantAction(
+        string $nodeAggregateId = '',
+        string $sourceDimensions = '',
+        string $mode = 'copy',
+        string $workspace = 'mcp'
+    ): void {
+        $this->checkAuth();
+        if ($nodeAggregateId === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodeAggregateId is required']));
+        }
+        $source = $this->parseDimensionsArgument($sourceDimensions);
+
+        try {
+            $this->crService->ensureWorkspace($this->mcpWorkspaceName, $this->mcpWorkspaceTitle, $this->mcpWorkspaceDescription);
+            $node = $this->crService->createNodeVariant($workspace, $nodeAggregateId, $source, $mode);
+            $this->emitNodeMutated($node, 'Variant created');
+
+            $this->view->assign('value', [
+                'success' => true,
+                'mode' => $mode,
+                'node' => $this->crService->serializeNode($node, $this->crService->getSubgraph($workspace)),
+            ]);
+        } catch (DimensionConflictException $e) {
+            $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+        } catch (\InvalidArgumentException $e) {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => $e->getMessage()]));
+        }
     }
 
     /** @Flow\SkipCsrfProtection */
@@ -845,6 +930,8 @@ class McpBridgeController extends ActionController
             ]);
         } catch (\Neos\Flow\Mvc\Exception\StopActionException $e) {
             throw $e;
+        } catch (DimensionConflictException $e) {
+            $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }

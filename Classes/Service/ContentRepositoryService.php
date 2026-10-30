@@ -19,6 +19,9 @@ use Neos\ContentRepository\Core\Feature\NodeReferencing\Dto\NodeReferenceToWrite
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateIds;
 use Neos\ContentRepository\Core\SharedModel\Node\ReferenceName;
 use Neos\ContentRepository\Core\Feature\NodeRemoval\Command\RemoveNodeAggregate;
+use Neos\ContentRepository\Core\Feature\NodeVariation\Command\CreateNodeVariant;
+use Neos\ContentRepository\Core\Feature\RootNodeCreation\Command\UpdateRootNodeAggregateDimensions;
+use Neos\ContentRepository\Core\SharedModel\Exception\NodeAggregateDoesCurrentlyNotCoverDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\SubtreeTagging\Command\TagSubtree;
 use Neos\ContentRepository\Core\Feature\SubtreeTagging\Command\UntagSubtree;
 use Neos\ContentRepository\Core\Feature\WorkspaceCommandSkipped;
@@ -116,6 +119,12 @@ class ContentRepositoryService
      * Site selected for the current request via selectSite(); null means the default site.
      */
     private ?Site $selectedSite = null;
+
+    /**
+     * Dimension space point requested for the current request via selectDimensions();
+     * null means the site's default dimension space point.
+     */
+    private ?DimensionSpacePoint $requestedDimensionSpacePoint = null;
 
     // -------------------------------------------------------------------------
     // Core accessors
@@ -291,7 +300,130 @@ class ContentRepositoryService
      */
     public function getDefaultDimensionSpacePoint(): DimensionSpacePoint
     {
-        return $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint;
+        return $this->requestedDimensionSpacePoint
+            ?? $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint;
+    }
+
+    /**
+     * Select the content dimensions all following operations work in, given as dimension
+     * name => value (e.g. ["language" => "nl"]). Dimensions that are left out keep the site's
+     * default value. Null selects the site's default dimension space point again.
+     *
+     * @param array<string, string>|null $dimensions
+     * @throws \InvalidArgumentException when a dimension or value does not exist
+     */
+    public function selectDimensions(?array $dimensions): void
+    {
+        $this->requestedDimensionSpacePoint = $dimensions === null || $dimensions === []
+            ? null
+            : $this->resolveDimensionSpacePoint($dimensions);
+    }
+
+    /**
+     * Whether dimensions were requested explicitly for this request.
+     */
+    public function hasRequestedDimensions(): bool
+    {
+        return $this->requestedDimensionSpacePoint !== null;
+    }
+
+    /**
+     * @param array<string, string> $dimensions
+     * @throws \InvalidArgumentException
+     */
+    public function resolveDimensionSpacePoint(array $dimensions): DimensionSpacePoint
+    {
+        $source = $this->getContentRepository()->getContentDimensionSource();
+        $available = [];
+        foreach ($source->getContentDimensionsOrderedByPriority() as $dimension) {
+            $available[$dimension->id->value] = $dimension;
+        }
+        foreach ($dimensions as $name => $value) {
+            if (!is_string($name) || !isset($available[$name])) {
+                throw new \InvalidArgumentException(sprintf(
+                    'Unknown dimension "%s". Available: %s',
+                    (string)$name,
+                    implode(', ', array_keys($available))
+                ));
+            }
+            if (!is_string($value) || $available[$name]->getValue($value) === null) {
+                $values = array_map(static fn ($v): string => $v->value, iterator_to_array($available[$name]->values));
+                throw new \InvalidArgumentException(sprintf(
+                    'Unknown value "%s" for dimension "%s". Available: %s',
+                    is_scalar($value) ? (string)$value : gettype($value),
+                    $name,
+                    implode(', ', $values)
+                ));
+            }
+        }
+        $coordinates = array_merge(
+            $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint->coordinates,
+            $dimensions
+        );
+        $point = DimensionSpacePoint::fromArray($coordinates);
+        if (!$this->getContentRepository()->getVariationGraph()->getDimensionSpacePoints()->contains($point)) {
+            throw new \InvalidArgumentException('The dimension combination ' . json_encode($coordinates) . ' is not allowed.');
+        }
+        return $point;
+    }
+
+    /**
+     * Available content dimensions: name, default value and the values with the fallback
+     * chain (the generalizations they are shown through) of each value.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function describeDimensions(): array
+    {
+        $defaults = $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint->coordinates;
+        $result = [];
+        foreach ($this->getContentRepository()->getContentDimensionSource()->getContentDimensionsOrderedByPriority() as $dimension) {
+            $values = [];
+            foreach ($dimension->values as $value) {
+                $fallback = [];
+                $current = $dimension->getGeneralization($value);
+                while ($current !== null) {
+                    $fallback[] = $current->value;
+                    $current = $dimension->getGeneralization($current);
+                }
+                $values[] = [
+                    'value' => $value->value,
+                    'label' => $value->getConfigurationValue('label') ?? $value->value,
+                    'fallback' => $fallback,
+                ];
+            }
+            $result[] = [
+                'name' => $dimension->id->value,
+                'default' => $defaults[$dimension->id->value] ?? null,
+                'values' => $values,
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * When dimensions were requested explicitly, a node must be stored in exactly those
+     * dimensions to be modified. A node that is only visible through a dimension fallback
+     * would otherwise be changed in its own (other) dimension.
+     *
+     * @throws DimensionConflictException
+     */
+    public function requireNodeInRequestedDimensions(Node $node, string $role = 'Node'): void
+    {
+        if ($this->requestedDimensionSpacePoint === null) {
+            return;
+        }
+        if ($node->originDimensionSpacePoint->toDimensionSpacePoint()->equals($this->requestedDimensionSpacePoint)) {
+            return;
+        }
+        throw new DimensionConflictException(sprintf(
+            '%s %s only exists in %s and is visible in %s through a dimension fallback. '
+            . 'Create a variant first with createNodeVariant.',
+            $role,
+            $node->aggregateId->value,
+            json_encode($node->originDimensionSpacePoint->coordinates),
+            json_encode($this->requestedDimensionSpacePoint->coordinates)
+        ));
     }
 
     public function getSubgraph(string $workspace = 'live'): ContentSubgraphInterface
@@ -490,6 +622,7 @@ class ContentRepositoryService
         if ($node === null) {
             throw new \RuntimeException('Node not found: ' . $nodeAggregateId, 1712000002);
         }
+        $this->requireNodeInRequestedDimensions($node);
 
         $command = SetNodeProperties::create(
             WorkspaceName::fromString($workspace),
@@ -507,6 +640,7 @@ class ContentRepositoryService
         if ($node === null) {
             throw new \RuntimeException('Node not found: ' . $nodeAggregateId, 1712000003);
         }
+        $this->requireNodeInRequestedDimensions($node);
 
         $targetNodeAggregateIds = NodeAggregateIds::fromArray(
             array_map(fn(string $id) => NodeAggregateId::fromString($id), $targetIds)
@@ -538,6 +672,7 @@ class ContentRepositoryService
         if ($node === null) {
             throw new \RuntimeException('Node not found: ' . $nodeAggregateId, 1712000007);
         }
+        $this->requireNodeInRequestedDimensions($node);
 
         $command = MoveNodeAggregate::create(
             WorkspaceName::fromString($workspace),
@@ -559,10 +694,12 @@ class ContentRepositoryService
             throw new \RuntimeException('Node not found: ' . $nodeAggregateId, 1712000008);
         }
 
+        // With explicit dimensions the node is removed from exactly those dimensions (and their
+        // specializations), even if it is stored in a generalization and shown here through it.
         $command = RemoveNodeAggregate::create(
             WorkspaceName::fromString($workspace),
             NodeAggregateId::fromString($nodeAggregateId),
-            $node->originDimensionSpacePoint->toDimensionSpacePoint(),
+            $this->requestedDimensionSpacePoint ?? $node->originDimensionSpacePoint->toDimensionSpacePoint(),
             NodeVariantSelectionStrategy::STRATEGY_ALL_SPECIALIZATIONS,
         );
 
@@ -578,7 +715,7 @@ class ContentRepositoryService
 
         $wsName = WorkspaceName::fromString($workspace);
         $nodeId = NodeAggregateId::fromString($nodeAggregateId);
-        $dsp = $node->originDimensionSpacePoint->toDimensionSpacePoint();
+        $dsp = $this->requestedDimensionSpacePoint ?? $node->originDimensionSpacePoint->toDimensionSpacePoint();
         $strategy = NodeVariantSelectionStrategy::STRATEGY_ALL_SPECIALIZATIONS;
 
         if ($hidden) {
@@ -588,6 +725,164 @@ class ContentRepositoryService
         }
 
         $this->getContentRepository()->handle($command);
+    }
+
+    // -------------------------------------------------------------------------
+    // Node variants
+    // -------------------------------------------------------------------------
+
+    /**
+     * Create a variant of a node in the requested dimensions, starting from the node as it
+     * exists in $sourceDimensions (default: the site's default dimensions).
+     *
+     * mode "copy": properties and the content below the node (non-document children) are
+     * copied. mode "empty": the variant has no properties (except uriPathSegment) and no content.
+     *
+     * @param array<string, string>|null $sourceDimensions
+     * @throws DimensionConflictException
+     */
+    public function createNodeVariant(string $workspace, string $nodeAggregateId, ?array $sourceDimensions, string $mode = 'copy'): Node
+    {
+        if ($this->requestedDimensionSpacePoint === null) {
+            throw new \InvalidArgumentException('dimensions is required: the dimensions to create the variant in');
+        }
+        if (!in_array($mode, ['copy', 'empty'], true)) {
+            throw new \InvalidArgumentException('mode must be "copy" or "empty"');
+        }
+
+        $cr = $this->getContentRepository();
+        $workspaceName = WorkspaceName::fromString($workspace);
+        $nodeId = NodeAggregateId::fromString($nodeAggregateId);
+        $target = $this->requestedDimensionSpacePoint;
+        $sourcePoint = $sourceDimensions !== null && $sourceDimensions !== []
+            ? $this->resolveDimensionSpacePoint($sourceDimensions)
+            : $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint;
+
+        $sourceSubgraph = $cr->getContentSubgraph($workspaceName, $sourcePoint);
+        $sourceNode = $sourceSubgraph->findNodeById($nodeId);
+        if ($sourceNode === null) {
+            throw new DimensionConflictException(
+                sprintf('Node %s not found in %s', $nodeAggregateId, json_encode($sourcePoint->coordinates)),
+                404
+            );
+        }
+
+        $existing = $cr->getContentSubgraph($workspaceName, $target)->findNodeById($nodeId);
+        if ($existing !== null && $existing->originDimensionSpacePoint->toDimensionSpacePoint()->equals($target)) {
+            throw new DimensionConflictException(
+                sprintf('Node %s already exists in %s', $nodeAggregateId, json_encode($target->coordinates))
+            );
+        }
+
+        $this->ensureRootCoversDimensionSpacePoint($workspaceName, $sourceSubgraph, $nodeId, $target);
+
+        $this->handleVariantCommand($workspaceName, $sourceNode, $target);
+
+        if ($mode === 'copy') {
+            $this->copyContentVariants($workspaceName, $sourceSubgraph, $sourceNode, $target);
+        } else {
+            $this->clearVariantProperties($workspaceName, $sourceNode, $target);
+        }
+
+        $created = $cr->getContentSubgraph($workspaceName, $target)->findNodeById($nodeId);
+        if ($created === null) {
+            throw new \RuntimeException('The variant was created but could not be read back: ' . $nodeAggregateId);
+        }
+        return $created;
+    }
+
+    private function handleVariantCommand(WorkspaceName $workspaceName, Node $sourceNode, DimensionSpacePoint $target): void
+    {
+        try {
+            $this->getContentRepository()->handle(CreateNodeVariant::create(
+                $workspaceName,
+                $sourceNode->aggregateId,
+                $sourceNode->originDimensionSpacePoint,
+                OriginDimensionSpacePoint::fromDimensionSpacePoint($target)
+            ));
+        } catch (NodeAggregateDoesCurrentlyNotCoverDimensionSpacePoint $e) {
+            throw new DimensionConflictException(
+                sprintf(
+                    'The parent of node %s does not exist in %s. Create the variant of the parent first.',
+                    $sourceNode->aggregateId->value,
+                    json_encode($target->coordinates)
+                )
+            );
+        }
+    }
+
+    /**
+     * Variants of a site node need the Sites root node to cover the target dimension. A dimension
+     * that was added after the root node was created is not covered yet.
+     */
+    private function ensureRootCoversDimensionSpacePoint(
+        WorkspaceName $workspaceName,
+        ContentSubgraphInterface $sourceSubgraph,
+        NodeAggregateId $nodeId,
+        DimensionSpacePoint $target
+    ): void {
+        $parent = $sourceSubgraph->findParentNode($nodeId);
+        if ($parent === null || !$parent->classification->isRoot()) {
+            return;
+        }
+        $graph = $this->getContentRepository()->getContentGraph($workspaceName);
+        $rootAggregate = $graph->findNodeAggregateById($parent->aggregateId);
+        if ($rootAggregate === null || $rootAggregate->coversDimensionSpacePoint($target)) {
+            return;
+        }
+        $this->getContentRepository()->handle(UpdateRootNodeAggregateDimensions::create($workspaceName, $parent->aggregateId));
+    }
+
+    /**
+     * Copy the content (non-document descendants) of a node into the target dimension.
+     * Descendants that were varied together with their parent (tethered children) are skipped.
+     */
+    private function copyContentVariants(
+        WorkspaceName $workspaceName,
+        ContentSubgraphInterface $sourceSubgraph,
+        Node $sourceNode,
+        DimensionSpacePoint $target
+    ): void {
+        $cr = $this->getContentRepository();
+        $nodeTypeManager = $cr->getNodeTypeManager();
+        foreach ($sourceSubgraph->findChildNodes($sourceNode->aggregateId, FindChildNodesFilter::create()) as $child) {
+            $childType = $nodeTypeManager->getNodeType($child->nodeTypeName);
+            if ($childType !== null && $childType->isOfType('Neos.Neos:Document')) {
+                continue;
+            }
+            $inTarget = $cr->getContentSubgraph($workspaceName, $target)->findNodeById($child->aggregateId);
+            if ($inTarget === null || !$inTarget->originDimensionSpacePoint->toDimensionSpacePoint()->equals($target)) {
+                $this->handleVariantCommand($workspaceName, $child, $target);
+            }
+            $this->copyContentVariants($workspaceName, $sourceSubgraph, $child, $target);
+        }
+    }
+
+    /**
+     * Unset all declared properties of a freshly created variant, except uriPathSegment.
+     */
+    private function clearVariantProperties(WorkspaceName $workspaceName, Node $sourceNode, DimensionSpacePoint $target): void
+    {
+        $nodeType = $this->getContentRepository()->getNodeTypeManager()->getNodeType($sourceNode->nodeTypeName);
+        if ($nodeType === null) {
+            return;
+        }
+        $values = [];
+        foreach (array_keys($nodeType->getProperties()) as $propertyName) {
+            if (str_starts_with($propertyName, '_') || $propertyName === 'uriPathSegment') {
+                continue;
+            }
+            $values[$propertyName] = null;
+        }
+        if ($values === []) {
+            return;
+        }
+        $this->getContentRepository()->handle(SetNodeProperties::create(
+            $workspaceName,
+            $sourceNode->aggregateId,
+            OriginDimensionSpacePoint::fromDimensionSpacePoint($target),
+            PropertyValuesToWrite::fromArray($values)
+        ));
     }
 
     // -------------------------------------------------------------------------
@@ -699,6 +994,8 @@ class ContentRepositoryService
             'nodeType' => $node->nodeTypeName->value,
             'name' => $node->name?->value,
             'path' => $path,
+            'dimensions' => $node->originDimensionSpacePoint->coordinates,
+            'fallback' => !$node->originDimensionSpacePoint->toDimensionSpacePoint()->equals($this->getDefaultDimensionSpacePoint()),
         ];
     }
 
