@@ -354,6 +354,29 @@ class McpBridgeController extends ActionController
     }
 
     /**
+     * Context for an explicit dimension => preset map (independent of the request's dimensions).
+     */
+    private function createContextForDimensions(string $workspace, array $presets): \Neos\ContentRepository\Domain\Service\Context
+    {
+        $allPresets = $this->contentDimensionPresetSource->getAllPresets();
+        $dimensions = [];
+        $targetDimensions = [];
+        foreach ($presets as $dimension => $presetName) {
+            $values = array_values($allPresets[$dimension]['presets'][$presetName]['values']);
+            $dimensions[$dimension] = $values;
+            $targetDimensions[$dimension] = $values[0];
+        }
+        return $this->contextFactory->create([
+            'workspaceName' => $workspace,
+            'invisibleContentShown' => true,
+            'removedContentShown' => false,
+            'inaccessibleContentShown' => false,
+            'dimensions' => $dimensions,
+            'targetDimensions' => $targetDimensions,
+        ]);
+    }
+
+    /**
      * Dimension values the node is actually stored in (dimension => first value) and whether
      * the node is only visible here through a dimension fallback.
      *
@@ -373,6 +396,46 @@ class McpBridgeController extends ActionController
             }
         }
         return ['dimensions' => $stored, 'fallback' => $fallback];
+    }
+
+    /**
+     * When dimensions were requested explicitly, write operations must act on a node that is
+     * stored in that dimension. A node that is only visible through a fallback would otherwise
+     * be copied implicitly (or, for removal, silently left alone).
+     */
+    private function requireNodeInRequestedDimensions(NodeInterface $node, string $role = 'Node'): void
+    {
+        if ($this->requestedDimensions === null) {
+            return;
+        }
+        $info = $this->nodeDimensionInfo($node);
+        if (!$info['fallback']) {
+            return;
+        }
+        $this->throwStatus(409, 'Conflict', json_encode([
+            'error' => sprintf(
+                '%s %s only exists in %s and is visible in %s through a dimension fallback. '
+                . 'Create a variant first with createNodeVariant.',
+                $role,
+                $node->getPath(),
+                json_encode($info['dimensions']),
+                json_encode($this->requestedDimensions)
+            ),
+            'dimensions' => $info['dimensions'],
+            'requestedDimensions' => $this->requestedDimensions,
+        ]));
+    }
+
+    /**
+     * @return array<string, string> default preset per dimension
+     */
+    private function defaultDimensions(): array
+    {
+        $defaults = [];
+        foreach ($this->contentDimensionPresetSource->getAllPresets() as $dimension => $config) {
+            $defaults[$dimension] = $config['defaultPreset'];
+        }
+        return $defaults;
     }
 
     private function requireWorkspace(string $workspaceName): void
@@ -817,6 +880,7 @@ class McpBridgeController extends ActionController
         if ($parentNode === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentPath]));
         }
+        $this->requireNodeInRequestedDimensions($parentNode, 'Parent node');
 
         $nodeTypeObject = $this->nodeTypeManager->getNodeType($nodeType);
         $template = new NodeTemplate();
@@ -867,6 +931,7 @@ class McpBridgeController extends ActionController
         if ($parentNode === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentPath]));
         }
+        $this->requireNodeInRequestedDimensions($parentNode, 'Parent node');
 
         $nodeTypeObject = $this->nodeTypeManager->getNodeType($nodeType);
         $template = new NodeTemplate();
@@ -942,6 +1007,7 @@ class McpBridgeController extends ActionController
         if ($node === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
+        $this->requireNodeInRequestedDimensions($node);
 
         if ($insertBefore !== '') {
             $refPath = preg_replace('/@.*$/', '', $insertBefore);
@@ -949,6 +1015,7 @@ class McpBridgeController extends ActionController
             if ($ref === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertBefore node not found: ' . $insertBefore]));
             }
+            $this->requireNodeInRequestedDimensions($ref, 'Reference node');
             $node->moveBefore($ref);
         } elseif ($insertAfter !== '') {
             $refPath = preg_replace('/@.*$/', '', $insertAfter);
@@ -956,12 +1023,14 @@ class McpBridgeController extends ActionController
             if ($ref === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertAfter node not found: ' . $insertAfter]));
             }
+            $this->requireNodeInRequestedDimensions($ref, 'Reference node');
             $node->moveAfter($ref);
         } else {
             $ref = $context->getNode($newParentPath);
             if ($ref === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'newParentPath node not found: ' . $newParentPath]));
             }
+            $this->requireNodeInRequestedDimensions($ref, 'Target parent');
             $node->moveInto($ref);
         }
 
@@ -995,6 +1064,8 @@ class McpBridgeController extends ActionController
         if ($node === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
+
+        $this->requireNodeInRequestedDimensions($node);
 
         $nodeType = $node->getNodeType();
         $propertyType = $nodeType->getPropertyType($property);
@@ -1044,6 +1115,8 @@ class McpBridgeController extends ActionController
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
 
+        $this->requireNodeInRequestedDimensions($node);
+
         $this->emitNodeMutated($node, 'Element removed');
         $node->remove();
         $this->persistenceManager->persistAll();
@@ -1051,6 +1124,86 @@ class McpBridgeController extends ActionController
         $this->view->assign('value', [
             'success' => true,
             'removedContextPath' => $contextPath,
+        ]);
+    }
+
+    /**
+     * Creates a variant of a node in the dimensions given by the "dimensions" argument,
+     * starting from the node as it exists in "sourceDimensions" (default: the default dimensions).
+     * mode "copy" copies properties and content; mode "empty" creates the variant without
+     * properties and content (auto-created child nodes are kept, empty).
+     *
+     * @Flow\SkipCsrfProtection
+     */
+    public function createNodeVariantAction(
+        string $contextPath = '',
+        string $sourceDimensions = '',
+        string $mode = 'copy',
+        string $workspace = 'mcp'
+    ): void {
+        $this->checkAuth();
+        if ($contextPath === '') {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'contextPath is required']));
+        }
+        if ($this->requestedDimensions === null) {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'dimensions is required: the dimensions to create the variant in']));
+        }
+        if (!in_array($mode, ['copy', 'empty'], true)) {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'mode must be "copy" or "empty"']));
+        }
+
+        $source = $this->parseDimensionsArgument($sourceDimensions) ?? $this->defaultDimensions();
+        $this->ensureMcpWorkspace();
+        $nodePath = preg_replace('/@.*$/', '', $contextPath);
+
+        $sourceNode = $this->createContextForDimensions($workspace, $source)->getNode($nodePath);
+        if ($sourceNode === null) {
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => sprintf('Node %s not found in %s', $nodePath, json_encode($source))]));
+        }
+
+        $targetContext = $this->createContext($workspace);
+        $existing = $targetContext->getNode($nodePath);
+        if ($existing !== null && !$this->nodeDimensionInfo($existing)['fallback']) {
+            $this->throwStatus(409, 'Conflict', json_encode(['error' => sprintf('Node %s already exists in %s', $nodePath, json_encode($this->requestedDimensions))]));
+        }
+        $parent = $sourceNode->getParent();
+        if ($parent !== null && $targetContext->getNode($parent->getPath()) === null) {
+            $this->throwStatus(409, 'Conflict', json_encode(['error' => sprintf(
+                'Parent %s does not exist in %s. Create the variant of the parent first.',
+                $parent->getPath(),
+                json_encode($this->requestedDimensions)
+            )]));
+        }
+
+        $newNode = $targetContext->adoptNode($sourceNode);
+        if ($mode === 'copy') {
+            foreach ($sourceNode->getChildNodes() as $child) {
+                if (!$child->getNodeType()->isOfType('Neos.Neos:Document')) {
+                    $targetContext->adoptNode($child, true);
+                }
+            }
+        } else {
+            foreach ($newNode->getPropertyNames() as $propertyName) {
+                if ($propertyName !== 'uriPathSegment') {
+                    $newNode->removeProperty($propertyName);
+                }
+            }
+            $autoCreated = array_keys($sourceNode->getNodeType()->getAutoCreatedChildNodes());
+            foreach ($sourceNode->getChildNodes() as $child) {
+                if (in_array($child->getName(), $autoCreated, true)) {
+                    $targetContext->adoptNode($child);
+                }
+            }
+        }
+
+        $this->emitNodeMutated($newNode, 'Variant created');
+        $this->persistenceManager->persistAll();
+
+        $this->view->assign('value', [
+            'success' => true,
+            'mode' => $mode,
+            'sourceDimensions' => $source,
+            'node' => $this->serializeNode($newNode),
         ]);
     }
 
