@@ -7,6 +7,7 @@ use Neos\ContentRepository\Domain\Model\NodeInterface;
 use Neos\ContentRepository\Domain\Model\NodeTemplate;
 use Neos\ContentRepository\Domain\Model\Workspace;
 use Neos\ContentRepository\Domain\Repository\WorkspaceRepository;
+use Neos\ContentRepository\Domain\Service\ContentDimensionPresetSourceInterface;
 use Neos\ContentRepository\Domain\Service\ContextFactoryInterface;
 use Neos\ContentRepository\Domain\Service\NodeTypeManager;
 use Neos\ContentRepository\Domain\Service\PublishingService;
@@ -39,6 +40,12 @@ class McpBridgeController extends ActionController
      * @var ContextFactoryInterface
      */
     protected $contextFactory;
+
+    /**
+     * @Flow\Inject
+     * @var ContentDimensionPresetSourceInterface
+     */
+    protected $contentDimensionPresetSource;
 
     /**
      * @Flow\Inject
@@ -163,6 +170,14 @@ class McpBridgeController extends ActionController
     }
 
     /**
+     * Content dimensions requested for this request as dimension name => preset name,
+     * or null when the "dimensions" argument was not given (the default dimensions apply).
+     *
+     * @var array<string, string>|null
+     */
+    private ?array $requestedDimensions = null;
+
+    /**
      * Every endpoint accepts an optional "site" argument (site node name) that selects
      * the site for site-scoped operations: site context, page tree, pending changes and
      * publishing. Without it the default site is used.
@@ -171,6 +186,12 @@ class McpBridgeController extends ActionController
     {
         parent::initializeAction();
         $this->siteService->selectSite(null);
+        $this->requestedDimensions = null;
+
+        if ($this->request->hasArgument('dimensions')) {
+            $this->checkAuth();
+            $this->requestedDimensions = $this->parseDimensionsArgument($this->request->getArgument('dimensions'));
+        }
 
         if (!$this->request->hasArgument('site')) {
             return;
@@ -186,6 +207,78 @@ class McpBridgeController extends ActionController
         } catch (\RuntimeException $e) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => $e->getMessage()]));
         }
+    }
+
+    /**
+     * Resolves the optional "dimensions" argument (an array, or a JSON object string such as
+     * {"language":"nl"}) to dimension name => preset name. Dimensions that are left out get their
+     * default preset. Returns null when nothing was requested.
+     *
+     * @return array<string, string>|null
+     */
+    private function parseDimensionsArgument(mixed $raw): ?array
+    {
+        if (is_string($raw)) {
+            $raw = trim($raw);
+            if ($raw === '') {
+                return null;
+            }
+            $decoded = json_decode($raw, true);
+            if (!is_array($decoded)) {
+                $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'dimensions must be a JSON object such as {"language":"nl"}']));
+            }
+            $raw = $decoded;
+        }
+        if (!is_array($raw)) {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'dimensions must be an object such as {"language":"nl"}']));
+        }
+        if ($raw === []) {
+            return null;
+        }
+
+        $allPresets = $this->contentDimensionPresetSource->getAllPresets();
+        foreach ($raw as $dimension => $preset) {
+            if (!is_string($dimension) || !isset($allPresets[$dimension])) {
+                $this->throwStatus(400, 'Bad Request', json_encode([
+                    'error' => sprintf('Unknown dimension "%s". Available: %s', (string)$dimension, implode(', ', array_keys($allPresets))),
+                ]));
+            }
+            if (!is_string($preset) || !isset($allPresets[$dimension]['presets'][$preset])) {
+                $this->throwStatus(400, 'Bad Request', json_encode([
+                    'error' => sprintf(
+                        'Unknown value "%s" for dimension "%s". Available: %s',
+                        is_scalar($preset) ? (string)$preset : gettype($preset),
+                        $dimension,
+                        implode(', ', array_keys($allPresets[$dimension]['presets']))
+                    ),
+                ]));
+            }
+        }
+
+        $resolved = [];
+        foreach ($allPresets as $dimension => $config) {
+            $resolved[$dimension] = $raw[$dimension] ?? $config['defaultPreset'];
+        }
+        return $resolved;
+    }
+
+    /**
+     * Context dimensions (value list including fallbacks) and target dimensions (the single
+     * value new variants are created in) for the requested presets.
+     *
+     * @return array{dimensions: array<string, array<int, string>>, targetDimensions: array<string, string>}
+     */
+    private function contextDimensionConfiguration(): array
+    {
+        $allPresets = $this->contentDimensionPresetSource->getAllPresets();
+        $dimensions = [];
+        $targetDimensions = [];
+        foreach ($this->requestedDimensions ?? [] as $dimension => $presetName) {
+            $values = array_values($allPresets[$dimension]['presets'][$presetName]['values']);
+            $dimensions[$dimension] = $values;
+            $targetDimensions[$dimension] = $values[0];
+        }
+        return ['dimensions' => $dimensions, 'targetDimensions' => $targetDimensions];
     }
 
     // -------------------------------------------------------------------------
@@ -248,12 +341,38 @@ class McpBridgeController extends ActionController
 
     private function createContext(string $workspace = 'live'): \Neos\ContentRepository\Domain\Service\Context
     {
-        return $this->contextFactory->create([
+        $configuration = [
             'workspaceName' => $workspace,
             'invisibleContentShown' => true,
             'removedContentShown' => false,
             'inaccessibleContentShown' => false,
-        ]);
+        ];
+        if ($this->requestedDimensions !== null) {
+            $configuration = array_merge($configuration, $this->contextDimensionConfiguration());
+        }
+        return $this->contextFactory->create($configuration);
+    }
+
+    /**
+     * Dimension values the node is actually stored in (dimension => first value) and whether
+     * the node is only visible here through a dimension fallback.
+     *
+     * @return array{dimensions: array<string, string>, fallback: bool}
+     */
+    private function nodeDimensionInfo(NodeInterface $node): array
+    {
+        $stored = [];
+        foreach ($node->getNodeData()->getDimensionValues() as $dimension => $values) {
+            $stored[$dimension] = (string)(is_array($values) ? reset($values) : $values);
+        }
+        $fallback = false;
+        $target = $node->getContext()->getTargetDimensions();
+        foreach ($stored as $dimension => $value) {
+            if (isset($target[$dimension]) && $target[$dimension] !== $value) {
+                $fallback = true;
+            }
+        }
+        return ['dimensions' => $stored, 'fallback' => $fallback];
     }
 
     private function requireWorkspace(string $workspaceName): void
@@ -330,13 +449,13 @@ class McpBridgeController extends ActionController
 
     private function serializeNode(NodeInterface $node): array
     {
-        return [
+        return array_merge([
             'identifier' => $node->getIdentifier(),
             'contextPath' => $node->getContextPath(),
             'path' => $node->getPath(),
             'nodeType' => $node->getNodeType()->getName(),
             'name' => $node->getName(),
-        ];
+        ], $this->nodeDimensionInfo($node));
     }
 
     private function collectDocumentNodes(NodeInterface $node, int $depth = 0): array
@@ -376,6 +495,33 @@ class McpBridgeController extends ActionController
     // -------------------------------------------------------------------------
     // Actions
     // -------------------------------------------------------------------------
+
+    /**
+     * Available content dimensions: name, default value and the values (presets) with the
+     * fallback chain each value resolves through.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function describeDimensions(): array
+    {
+        $result = [];
+        foreach ($this->contentDimensionPresetSource->getAllPresets() as $name => $config) {
+            $values = [];
+            foreach ($config['presets'] as $presetName => $preset) {
+                $values[] = [
+                    'value' => $presetName,
+                    'label' => $preset['label'] ?? $presetName,
+                    'fallback' => array_slice(array_values($preset['values']), 1),
+                ];
+            }
+            $result[] = [
+                'name' => $name,
+                'default' => $config['defaultPreset'],
+                'values' => $values,
+            ];
+        }
+        return $result;
+    }
 
     /** @Flow\SkipCsrfProtection */
     public function listSitesAction(): void
@@ -435,6 +581,7 @@ class McpBridgeController extends ActionController
             : '';
 
         $this->view->assign('value', [
+            'dimensions' => $this->describeDimensions(),
             'siteName' => $site->getName(),
             'siteNodeName' => $site->getNodeName(),
             'siteNodePath' => $siteNodePath,
