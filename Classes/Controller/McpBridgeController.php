@@ -329,6 +329,12 @@ class McpBridgeController extends ActionController
     private function unpublishedNodesOfSite(Workspace $workspace, ?\Neos\Neos\Domain\Model\Site $site): array
     {
         $unpublished = $this->publishingService->getUnpublishedNodes($workspace);
+        if ($this->requestedDimensions !== null) {
+            $unpublished = array_values(array_filter(
+                $unpublished,
+                fn (NodeInterface $node): bool => $this->nodeStoredInRequestedDimensions($node)
+            ));
+        }
         if ($site === null) {
             return $unpublished;
         }
@@ -337,6 +343,45 @@ class McpBridgeController extends ActionController
             $unpublished,
             fn (NodeInterface $node): bool => $this->siteService->siteNodeNameForPath($node->getPath()) === $siteNodeName
         ));
+    }
+
+    /**
+     * Whether the node is stored in exactly the requested dimensions (not merely visible
+     * there through a fallback). True when no dimensions were requested.
+     */
+    private function nodeStoredInRequestedDimensions(NodeInterface $node): bool
+    {
+        if ($this->requestedDimensions === null) {
+            return true;
+        }
+        $target = $this->contextDimensionConfiguration()['targetDimensions'];
+        $stored = $this->nodeDimensionInfo($node)['dimensions'];
+        foreach ($target as $dimension => $value) {
+            if (($stored[$dimension] ?? null) !== $value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The URI path segment of the requested dimensions (e.g. "uk", or "uk_b2b" for several
+     * dimensions), or '' when none was requested or the presets have no URI segment.
+     */
+    private function requestedDimensionsUriSegment(): string
+    {
+        if ($this->requestedDimensions === null) {
+            return '';
+        }
+        $allPresets = $this->contentDimensionPresetSource->getAllPresets();
+        $segments = [];
+        foreach ($this->requestedDimensions as $dimension => $presetName) {
+            $segment = (string)($allPresets[$dimension]['presets'][$presetName]['uriSegment'] ?? '');
+            if ($segment !== '') {
+                $segments[] = $segment;
+            }
+        }
+        return implode('_', $segments);
     }
 
     private function createContext(string $workspace = 'live'): \Neos\ContentRepository\Domain\Service\Context
@@ -698,6 +743,8 @@ class McpBridgeController extends ActionController
         if ($nodePath === '') {
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
         }
+        // Accept a context path (/sites/x@mcp;language=nl) as well; the context comes from workspace and dimensions.
+        $nodePath = preg_replace('/@.*$/', '', $nodePath);
         $context = $this->createContext($workspace);
         $pageNode = $context->getNode($nodePath);
         if ($pageNode === null) {
@@ -728,6 +775,7 @@ class McpBridgeController extends ActionController
         if ($nodePath === '') {
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
         }
+        $nodePath = preg_replace('/@.*$/', '', $nodePath);
         $context = $this->createContext($workspace);
         $node = $context->getNode($nodePath);
         if ($node === null) {
@@ -798,11 +846,13 @@ class McpBridgeController extends ActionController
                 'nodeType' => $node->getNodeType()->getName(),
                 'changeType' => $shadowNode === null ? 'added' : ($node->isRemoved() ? 'removed' : 'modified'),
                 'site' => $this->siteService->siteNodeNameForPath($node->getPath()),
+                'dimensions' => $this->nodeDimensionInfo($node)['dimensions'],
             ];
         }
         $this->view->assign('value', [
             'workspace' => $workspace,
             'site' => $site?->getNodeName(),
+            'dimensions' => $this->requestedDimensions,
             'count' => count($changes),
             'pendingChanges' => $changes,
         ]);
@@ -816,6 +866,7 @@ class McpBridgeController extends ActionController
         if ($nodePath === '') {
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
         }
+        $nodePath = preg_replace('/@.*$/', '', $nodePath);
 
         $token = bin2hex(random_bytes(32));
         $expiresAt = (new \DateTimeImmutable())->modify('+24 hours');
@@ -848,6 +899,11 @@ class McpBridgeController extends ActionController
             $current = $current->getParent();
         }
         $frontendPath = '/' . implode('/', $segments);
+        // With explicit dimensions the URL carries their segment (e.g. /uk/page); without, Neos resolves the default.
+        $dimensionSegment = $this->requestedDimensionsUriSegment();
+        if ($dimensionSegment !== '') {
+            $frontendPath = '/' . $dimensionSegment . ($frontendPath === '/' ? '' : $frontendPath);
+        }
 
         $previewUrl = $baseUrl . $frontendPath . '?_mcpPreview=' . $token;
 
@@ -857,6 +913,7 @@ class McpBridgeController extends ActionController
             'token' => $token,
             'workspace' => $workspace,
             'nodePath' => $nodePath,
+            'dimensions' => $this->requestedDimensions,
             'expiresAt' => $expiresAt->format(\DateTimeInterface::ATOM),
         ]);
     }
@@ -1232,6 +1289,7 @@ class McpBridgeController extends ActionController
             'publishedNodes' => $count,
             'workspace' => $workspace,
             'site' => $site?->getNodeName(),
+            'dimensions' => $this->requestedDimensions,
             'targetWorkspace' => 'live',
         ]);
     }
