@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.4.0](https://github.com/UpAssist/neos-mcp/compare/2.3.0...2.4.0) (2026-11-02)
+
+
+### Features
+
+* content dimensions per request, guarded writes and createNodeVariant ([#10](https://github.com/UpAssist/neos-mcp/issues/10)) ([c2dc448](https://github.com/UpAssist/neos-mcp/commit/c2dc44878a2dab0dbaf0d616a5c7afc533e2486a))
+* dimension-aware preview URL, pending changes and publishing ([#10](https://github.com/UpAssist/neos-mcp/issues/10)) ([9069376](https://github.com/UpAssist/neos-mcp/commit/9069376f7dfc6080bd455dfa51ad2b13c4ee5eab))
+
+
+### Bug Fixes
+
+* multi-dimension robustness, DimensionSelection class, tests and docs ([#10](https://github.com/UpAssist/neos-mcp/issues/10)) ([f5bcfd5](https://github.com/UpAssist/neos-mcp/commit/f5bcfd5cf56957d0a84f967376fd2f8f86e2e51c))
+
 ## [2.3.0](https://github.com/UpAssist/neos-mcp/compare/2.2.0...2.3.0) (2026-10-13)
 
 
