@@ -336,42 +336,33 @@ class ContentRepositoryService
         return $this->requestedDimensionSpacePoint !== null;
     }
 
+    private function dimensionSelection(): DimensionSelection
+    {
+        $available = [];
+        foreach ($this->getContentRepository()->getContentDimensionSource()->getContentDimensionsOrderedByPriority() as $dimension) {
+            $values = [];
+            foreach ($dimension->values as $value) {
+                $values[$value->value] = [
+                    'label' => $value->getConfigurationValue('label'),
+                    'generalization' => $dimension->getGeneralization($value)?->value,
+                ];
+            }
+            $available[$dimension->id->value] = ['values' => $values];
+        }
+        return new DimensionSelection($available);
+    }
+
     /**
      * @param array<string, string> $dimensions
      * @throws \InvalidArgumentException
      */
     public function resolveDimensionSpacePoint(array $dimensions): DimensionSpacePoint
     {
-        $source = $this->getContentRepository()->getContentDimensionSource();
-        $available = [];
-        foreach ($source->getContentDimensionsOrderedByPriority() as $dimension) {
-            $available[$dimension->id->value] = $dimension;
-        }
-        foreach ($dimensions as $name => $value) {
-            if (!is_string($name) || !isset($available[$name])) {
-                throw new \InvalidArgumentException(sprintf(
-                    'Unknown dimension "%s". Available: %s',
-                    (string)$name,
-                    implode(', ', array_keys($available))
-                ));
-            }
-            if (!is_string($value) || $available[$name]->getValue($value) === null) {
-                $values = array_map(static fn ($v): string => $v->value, iterator_to_array($available[$name]->values));
-                throw new \InvalidArgumentException(sprintf(
-                    'Unknown value "%s" for dimension "%s". Available: %s',
-                    is_scalar($value) ? (string)$value : gettype($value),
-                    $name,
-                    implode(', ', $values)
-                ));
-            }
-        }
-        $coordinates = array_merge(
-            $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint->coordinates,
-            $dimensions
-        );
+        $defaults = $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint->coordinates;
+        $coordinates = $this->dimensionSelection()->complete($dimensions, $defaults);
         $point = DimensionSpacePoint::fromArray($coordinates);
         if (!$this->getContentRepository()->getVariationGraph()->getDimensionSpacePoints()->contains($point)) {
-            throw new \InvalidArgumentException('The dimension combination ' . json_encode($coordinates) . ' is not allowed.');
+            throw new InvalidDimensionsException('The dimension combination ' . json_encode($coordinates) . ' is not allowed.', 1791540405);
         }
         return $point;
     }
@@ -384,30 +375,9 @@ class ContentRepositoryService
      */
     public function describeDimensions(): array
     {
-        $defaults = $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint->coordinates;
-        $result = [];
-        foreach ($this->getContentRepository()->getContentDimensionSource()->getContentDimensionsOrderedByPriority() as $dimension) {
-            $values = [];
-            foreach ($dimension->values as $value) {
-                $fallback = [];
-                $current = $dimension->getGeneralization($value);
-                while ($current !== null) {
-                    $fallback[] = $current->value;
-                    $current = $dimension->getGeneralization($current);
-                }
-                $values[] = [
-                    'value' => $value->value,
-                    'label' => $value->getConfigurationValue('label') ?? $value->value,
-                    'fallback' => $fallback,
-                ];
-            }
-            $result[] = [
-                'name' => $dimension->id->value,
-                'default' => $defaults[$dimension->id->value] ?? null,
-                'values' => $values,
-            ];
-        }
-        return $result;
+        return $this->dimensionSelection()->describe(
+            $this->getCurrentSite()->getConfiguration()->defaultDimensionSpacePoint->coordinates
+        );
     }
 
     /**
@@ -450,6 +420,33 @@ class ContentRepositoryService
             WorkspaceName::fromString($workspace),
             $this->getDefaultDimensionSpacePoint()
         );
+    }
+
+    /**
+     * The site node in the site's default dimensions, whatever dimensions the request selected.
+     */
+    public function getSiteNodeInDefaultDimensions(string $workspace = 'live'): Node
+    {
+        $requested = $this->requestedDimensionSpacePoint;
+        $this->requestedDimensionSpacePoint = null;
+        try {
+            return $this->getSiteNode($workspace);
+        } finally {
+            $this->requestedDimensionSpacePoint = $requested;
+        }
+    }
+
+    /**
+     * The site node in the active dimensions, or null if the site has no content there yet
+     * (for example a dimension combination nothing was translated to).
+     */
+    public function findSiteNode(string $workspace = 'live'): ?Node
+    {
+        try {
+            return $this->getSiteNode($workspace);
+        } catch (\Exception $e) {
+            return null;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -915,7 +912,7 @@ class ContentRepositoryService
                 !$allDimensions
                 && $this->requestedDimensionSpacePoint !== null
                 && $change->originDimensionSpacePoint !== null
-                && $change->originDimensionSpacePoint->coordinates !== $this->requestedDimensionSpacePoint->coordinates
+                && !DimensionSelection::sameCoordinates($change->originDimensionSpacePoint->coordinates, $this->requestedDimensionSpacePoint->coordinates)
             ) {
                 continue;
             }
@@ -1007,30 +1004,12 @@ class ContentRepositoryService
         }
         $requested = $this->requestedDimensionSpacePoint->coordinates;
 
-        $byAggregate = [];
-        foreach ($this->getPendingChanges($workspace, $site, true) as $change) {
-            $byAggregate[$change['nodeAggregateId']][] = $change;
-        }
-
-        $publishable = [];
-        $skipped = [];
-        foreach ($byAggregate as $aggregateId => $changes) {
-            $dimensions = array_map(static fn (array $c): ?array => $c['dimensions'], $changes);
-            $others = array_values(array_filter($dimensions, static fn (?array $d): bool => $d !== null && $d !== $requested));
-            $inRequested = array_filter($dimensions, static fn (?array $d): bool => $d === null || $d === $requested);
-            if ($inRequested === []) {
-                continue;
-            }
-            if ($others !== []) {
-                $skipped[] = [
-                    'nodeAggregateId' => $aggregateId,
-                    'reason' => 'Also has pending changes in other dimensions; Neos publishes whole nodes. Publish without "dimensions" to publish all dimensions of this node.',
-                    'otherDimensions' => $others,
-                ];
-                continue;
-            }
-            $publishable[] = (string)$aggregateId;
-        }
+        $partition = DimensionSelection::partitionForPublishing(
+            $this->getPendingChanges($workspace, $site, true),
+            $requested
+        );
+        $publishable = $partition['publishable'];
+        $skipped = $partition['skipped'];
 
         if ($publishable === []) {
             return ['published' => 0, 'skipped' => $skipped];

@@ -20,6 +20,8 @@ use Neos\Media\Domain\Repository\TagRepository;
 use Neos\Media\Domain\Strategy\AssetModelMappingStrategyInterface;
 use UpAssist\Neos\Mcp\Service\ContentRepositoryService;
 use UpAssist\Neos\Mcp\Service\DimensionConflictException;
+use UpAssist\Neos\Mcp\Service\DimensionSelection;
+use UpAssist\Neos\Mcp\Service\InvalidDimensionsException;
 
 class McpBridgeController extends ActionController
 {
@@ -147,7 +149,7 @@ class McpBridgeController extends ActionController
             $dimensions = $this->parseDimensionsArgument($this->request->getArgument('dimensions'));
             try {
                 $this->crService->selectDimensions($dimensions);
-            } catch (\InvalidArgumentException $e) {
+            } catch (InvalidDimensionsException $e) {
                 $this->throwStatus(400, 'Bad Request', json_encode(['error' => $e->getMessage()]));
             }
         }
@@ -161,21 +163,11 @@ class McpBridgeController extends ActionController
      */
     private function parseDimensionsArgument(mixed $raw): ?array
     {
-        if (is_string($raw)) {
-            $raw = trim($raw);
-            if ($raw === '') {
-                return null;
-            }
-            $decoded = json_decode($raw, true);
-            if (!is_array($decoded)) {
-                $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'dimensions must be a JSON object such as {"language":"nl"}']));
-            }
-            $raw = $decoded;
+        try {
+            return DimensionSelection::parseArgument($raw);
+        } catch (InvalidDimensionsException $e) {
+            $this->throwStatus(400, 'Bad Request', json_encode(['error' => $e->getMessage()]));
         }
-        if (!is_array($raw)) {
-            $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'dimensions must be an object such as {"language":"nl"}']));
-        }
-        return $raw === [] ? null : $raw;
     }
 
     // -------------------------------------------------------------------------
@@ -196,9 +188,13 @@ class McpBridgeController extends ActionController
         $this->checkAuth();
 
         $site = $this->crService->getCurrentSite();
-        $siteNode = $this->crService->getSiteNode('live');
+        // Without content in the requested dimensions the page tree is empty; the site node id is the default one.
+        $siteNodeInDimensions = $this->crService->findSiteNode('live');
+        $siteNode = $siteNodeInDimensions ?? $this->crService->getSiteNodeInDefaultDimensions('live');
         $nodeTypes = $this->crService->getNodeTypes('all');
-        $pages = $this->crService->collectDocumentNodes($siteNode, 'live', includeProperties: false);
+        $pages = $siteNodeInDimensions !== null
+            ? $this->crService->collectDocumentNodes($siteNode, 'live', includeProperties: false)
+            : [];
 
         $sites = array_map(
             static fn (array $s): array => array_intersect_key($s, array_flip(['name', 'nodeName', 'online', 'default', 'primaryDomain'])),
@@ -257,7 +253,14 @@ class McpBridgeController extends ActionController
     {
         $this->checkAuth();
         $this->requireWorkspace($workspace);
-        $siteNode = $this->crService->getSiteNode($workspace);
+        $siteNode = $this->crService->findSiteNode($workspace);
+        if ($siteNode === null) {
+            $this->view->assign('value', [
+                'pages' => [],
+                'hint' => 'The site has no content in these dimensions yet. Create variants top-down, starting with the site node (neos_create_node_variant).',
+            ]);
+            return;
+        }
         $this->view->assign('value', ['pages' => $this->crService->collectDocumentNodes($siteNode, $workspace)]);
     }
 
@@ -428,6 +431,9 @@ class McpBridgeController extends ActionController
             ]);
         } catch (DimensionConflictException $e) {
             $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+        } catch (\Neos\Flow\Mvc\Exception\StopActionException $e) {
+            // throwStatus() inside the try block (404 etc.) must not be turned into a 500
+            throw $e;
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -497,6 +503,9 @@ class McpBridgeController extends ActionController
             ]);
         } catch (DimensionConflictException $e) {
             $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+        } catch (\Neos\Flow\Mvc\Exception\StopActionException $e) {
+            // throwStatus() inside the try block (404 etc.) must not be turned into a 500
+            throw $e;
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -546,6 +555,9 @@ class McpBridgeController extends ActionController
             ]);
         } catch (DimensionConflictException $e) {
             $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+        } catch (\Neos\Flow\Mvc\Exception\StopActionException $e) {
+            // throwStatus() inside the try block (404 etc.) must not be turned into a 500
+            throw $e;
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -650,6 +662,9 @@ class McpBridgeController extends ActionController
             ]);
         } catch (DimensionConflictException $e) {
             $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+        } catch (\Neos\Flow\Mvc\Exception\StopActionException $e) {
+            // throwStatus() inside the try block (404 etc.) must not be turned into a 500
+            throw $e;
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }
@@ -945,6 +960,9 @@ class McpBridgeController extends ActionController
             throw $e;
         } catch (DimensionConflictException $e) {
             $this->throwStatus($e->getStatusCode(), null, json_encode(['error' => $e->getMessage()]));
+        } catch (\Neos\Flow\Mvc\Exception\StopActionException $e) {
+            // throwStatus() inside the try block (404 etc.) must not be turned into a 500
+            throw $e;
         } catch (\Exception $e) {
             $this->throwStatus(500, 'Internal Server Error', json_encode(['error' => $e->getMessage()]));
         }

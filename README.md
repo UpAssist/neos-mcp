@@ -161,7 +161,8 @@ Once connected, the AI assistant has access to these capabilities:
 | `neos_create_content_node` | Create a new content element inside a page |
 | `neos_create_document_node` | Create a new page |
 | `neos_move_node` | Move a node to a new position |
-| `neos_delete_node` | Remove a node |
+| `neos_delete_node` | Remove a node (with `dimensions`: only that variant) |
+| `neos_create_node_variant` | Create a variant of a node in other content dimensions, as a copy or empty |
 
 ### Manage assets
 
@@ -207,6 +208,22 @@ Without `site`, everything behaves as before. Which site is the default is decid
 The MCP workspace exists once per content repository, so sites sharing a content repository also share the review workspace; use `site` on `listPendingChanges` and `publishChanges` to review and publish them separately.
 
 One API token covers the whole instance: it authenticates with the configured roles (`Neos.Neos:Administrator` by default) for all sites. Restricting a token to certain sites is not supported.
+
+## Content dimensions
+
+A site can have content dimensions, such as a language or a country. `getSiteContext` lists them under `dimensions`, with the default value and the fallback chain of each value (for example `{"value": "en_UK", "fallback": ["en_US"]}`). Any number of dimensions can be combined.
+
+Every endpoint accepts an optional `dimensions` parameter that selects the dimensions the request works in, like `site` selects the site. Pass a JSON object (`{"language": "nl", "country": "be"}`; in a GET query as a JSON string or as `dimensions[language]=nl`). Dimensions you leave out keep their default value; without `dimensions` the request works in the default dimensions, exactly as before. An unknown dimension or value answers `400` and lists the available ones.
+
+- Nodes in the responses contain `dimensions` (where the node is stored) and `fallback` (`true` when it is only visible in the requested dimensions through a fallback).
+- With `dimensions`, a node that is only visible through a fallback is not modified, moved or used as a parent: the request answers `409` with the dimensions the node is stored in. Create the variant first with `createNodeVariant`.
+- `createNodeVariant` creates a variant in the target dimensions, from the node as it exists in `sourceDimensions` (default: the default dimensions). `mode` is `copy` (properties and content are copied) or `empty` (no properties except the URI path segment, and no content). The parent has to exist in the target dimensions: create variants top-down (`409` otherwise).
+- `deleteNode` with `dimensions` removes only the variant in those dimensions.
+- `deleteNode` with `dimensions` on a node that is only visible through a fallback removes the page from the requested dimension (and its specializations) only; it stays in the dimension it is stored in. A specialization that was removed this way does not fall back again.
+- `getPreviewUrl` puts the prefix of the site's dimension resolver in the link (for example `/uk/page`).
+- `listPendingChanges` shows the `dimensions` of each change (`null` for changes that apply to the whole node) and only lists the changes of the requested dimensions. Neos publishes whole nodes, so `publishChanges` with `dimensions` publishes the nodes whose pending changes are all in those dimensions; nodes that also changed in another dimension are skipped and listed under `skippedNodes`. Without `dimensions` everything is published.
+- When a dimension was added to a site that already has content, `createNodeVariant` brings the `Sites` root node up to date for it. A shared workspace that was created earlier may be outdated (`./flow workspace:rebase mcp`).
+- A request for dimensions the site has no content in yet answers an empty `pages` list on `listPages` with a hint.
 
 ## Entity CRUD (advanced)
 
@@ -346,6 +363,8 @@ All endpoints are available under `/neos/mcp/` and accept/return JSON. Every req
 
 Every endpoint also accepts an optional `site` parameter (a site node name) that selects the site for site-scoped operations, see [Multi-site](#multi-site). Without it the default site is used.
 
+Every endpoint also accepts an optional `dimensions` parameter that selects the content dimensions the request works in, see [Content dimensions](#content-dimensions). Without it the default dimensions are used.
+
 ### Property resolution
 
 `updateNodeProperty`, `createContentNode`, and `createDocumentNode` all resolve property values against the target NodeType's declared property type before writing them:
@@ -411,6 +430,10 @@ Move a node. Parameters: `contextPath` (required), plus exactly one of: `insertB
 ### POST /neos/mcp/deleteNode
 
 Remove a node. Parameters: `contextPath` (required), `workspace` (default: `mcp`).
+
+### POST /neos/mcp/createNodeVariant
+
+Create a variant of a node in other dimensions, see [Content dimensions](#content-dimensions). Parameters: `nodeAggregateId` (required), `dimensions` (required, the target dimensions), `sourceDimensions` (optional, default: the default dimensions), `mode` (`copy` or `empty`, default: `copy`), `workspace` (default: `mcp`).
 
 ### POST /neos/mcp/listPendingChanges
 
@@ -530,12 +553,18 @@ FLOW_CONTEXT=Testing bin/phpunit \
 - The package ships `Configuration/Testing/Settings.yaml`, which sets a fixed API token for the test run. It only applies in the `Testing` context.
 - Running the whole functional suite of a distribution that also contains other packages' functional tests can fail on their missing dev dependencies (for example `neos/behat`). In that case run the tests from a clean `neos/neos-base-distribution` that requires this package.
 
-The unit tests cover property value resolution without a database:
+The unit tests cover property value resolution and the handling of the `dimensions` argument (`Tests/Unit/Service/DimensionSelectionTest.php`) without a database:
 
 ```bash
 bin/phpunit \
   -c Build/BuildEssentials/PhpUnit/UnitTests.xml \
   Packages/Application/UpAssist.Neos.Mcp/Tests/Unit
+```
+
+The dimension scenario `Tests/Scenarios/dimensions.sh` checks content dimensions end to end against a running bridge: it creates a page in the `mcp` workspace, creates a variant, changes, lists and removes it in several dimension combinations, and refuses to touch nodes that are only visible through a fallback. It needs two dimensions (`language`: `en_US` default and `de`; `country`: `nl` default and `be`) and never publishes, but it writes to the `mcp` workspace, so do not run it against a site with real content:
+
+```bash
+NEOS_MCP_URL=http://127.0.0.1:8080 NEOS_MCP_TOKEN=<token> bash Tests/Scenarios/dimensions.sh
 ```
 
 ## License
