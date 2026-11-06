@@ -5,6 +5,7 @@ namespace UpAssist\Neos\Mcp\Controller;
 
 use Neos\ContentRepository\Domain\Model\NodeInterface;
 use Neos\ContentRepository\Domain\Model\NodeTemplate;
+use Neos\ContentRepository\Domain\Model\NodeType;
 use Neos\ContentRepository\Domain\Model\Workspace;
 use Neos\ContentRepository\Domain\Repository\WorkspaceRepository;
 use Neos\ContentRepository\Domain\Service\ContentDimensionPresetSourceInterface;
@@ -409,6 +410,39 @@ class McpBridgeController extends ActionController
             'dimensions' => $info['dimensions'],
             'requestedDimensions' => $this->requestedDimensions,
         ]));
+    }
+
+    /**
+     * Neos 8 does not check the node type constraints in createNodeFromTemplate() and the
+     * move methods, the Neos UI does it before. The bridge has to do the same, otherwise
+     * nodes end up where an editor could never put them (e.g. a page type that is only
+     * allowed inside of a certain collection).
+     */
+    private function requireNodeTypeAllowedIn(NodeInterface $parentNode, NodeType $nodeType): void
+    {
+        if ($parentNode->isNodeTypeAllowedAsChildNode($nodeType)) {
+            return;
+        }
+        $this->throwStatus(422, 'Unprocessable Entity', json_encode([
+            'error' => sprintf(
+                'Node type %s is not allowed in %s (%s), see the constraints of the node types.',
+                $nodeType->getName(),
+                $parentNode->getPath(),
+                $parentNode->getNodeType()->getName()
+            ),
+        ]));
+    }
+
+    /**
+     * Reordering inside of the same parent stays possible, even for nodes that were created
+     * before a constraint was added.
+     */
+    private function requireNodeTypeAllowedInNewParent(NodeInterface $node, NodeInterface $newParentNode): void
+    {
+        if ($newParentNode->getPath() === $node->getParentPath()) {
+            return;
+        }
+        $this->requireNodeTypeAllowedIn($newParentNode, $node->getNodeType());
     }
 
     /**
@@ -860,6 +894,7 @@ class McpBridgeController extends ActionController
         $this->requireNodeInRequestedDimensions($parentNode, 'Parent node');
 
         $nodeTypeObject = $this->nodeTypeManager->getNodeType($nodeType);
+        $this->requireNodeTypeAllowedIn($parentNode, $nodeTypeObject);
         $template = new NodeTemplate();
         $template->setNodeType($nodeTypeObject);
 
@@ -910,7 +945,22 @@ class McpBridgeController extends ActionController
         }
         $this->requireNodeInRequestedDimensions($parentNode, 'Parent node');
 
+        // The sibling decides where the new node ends up, so it is resolved before anything is created
+        $sibling = null;
+        if ($insertBefore !== '' || $insertAfter !== '') {
+            $siblingParameter = $insertBefore !== '' ? 'insertBefore' : 'insertAfter';
+            $siblingContextPath = $insertBefore !== '' ? $insertBefore : $insertAfter;
+            $sibling = $context->getNode(preg_replace('/@.*$/', '', $siblingContextPath));
+            if ($sibling === null) {
+                $this->throwStatus(404, 'Not Found', json_encode(['error' => $siblingParameter . ' node not found: ' . $siblingContextPath]));
+            }
+        }
+
         $nodeTypeObject = $this->nodeTypeManager->getNodeType($nodeType);
+        $this->requireNodeTypeAllowedIn($parentNode, $nodeTypeObject);
+        if ($sibling !== null) {
+            $this->requireNodeTypeAllowedIn($sibling->getParent(), $nodeTypeObject);
+        }
         $template = new NodeTemplate();
         $template->setNodeType($nodeTypeObject);
 
@@ -934,19 +984,9 @@ class McpBridgeController extends ActionController
 
         $newNode = $parentNode->createNodeFromTemplate($template);
 
-        if ($insertBefore !== '') {
-            $siblingPath = preg_replace('/@.*$/', '', $insertBefore);
-            $sibling = $context->getNode($siblingPath);
-            if ($sibling === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertBefore node not found: ' . $insertBefore]));
-            }
+        if ($sibling !== null && $insertBefore !== '') {
             $newNode->moveBefore($sibling);
-        } elseif ($insertAfter !== '') {
-            $siblingPath = preg_replace('/@.*$/', '', $insertAfter);
-            $sibling = $context->getNode($siblingPath);
-            if ($sibling === null) {
-                $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertAfter node not found: ' . $insertAfter]));
-            }
+        } elseif ($sibling !== null) {
             $newNode->moveAfter($sibling);
         }
 
@@ -993,6 +1033,7 @@ class McpBridgeController extends ActionController
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertBefore node not found: ' . $insertBefore]));
             }
             $this->requireNodeInRequestedDimensions($ref, 'Reference node');
+            $this->requireNodeTypeAllowedInNewParent($node, $ref->getParent());
             $node->moveBefore($ref);
         } elseif ($insertAfter !== '') {
             $refPath = preg_replace('/@.*$/', '', $insertAfter);
@@ -1001,6 +1042,7 @@ class McpBridgeController extends ActionController
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertAfter node not found: ' . $insertAfter]));
             }
             $this->requireNodeInRequestedDimensions($ref, 'Reference node');
+            $this->requireNodeTypeAllowedInNewParent($node, $ref->getParent());
             $node->moveAfter($ref);
         } else {
             $ref = $context->getNode($newParentPath);
@@ -1008,6 +1050,7 @@ class McpBridgeController extends ActionController
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'newParentPath node not found: ' . $newParentPath]));
             }
             $this->requireNodeInRequestedDimensions($ref, 'Target parent');
+            $this->requireNodeTypeAllowedInNewParent($node, $ref);
             $node->moveInto($ref);
         }
 
