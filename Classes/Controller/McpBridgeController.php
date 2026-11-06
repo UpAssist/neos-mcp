@@ -954,6 +954,7 @@ class McpBridgeController extends ActionController
             if ($sibling === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => $siblingParameter . ' node not found: ' . $siblingContextPath]));
             }
+            $this->requireNodeInRequestedDimensions($sibling, 'Sibling node');
         }
 
         $nodeTypeObject = $this->nodeTypeManager->getNodeType($nodeType);
