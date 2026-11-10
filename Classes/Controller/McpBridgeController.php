@@ -293,6 +293,7 @@ class McpBridgeController extends ActionController
             'page' => array_merge($this->crService->serializeNode($pageNode, $subgraph), [
                 'title' => $pageNode->getProperty('title') ?? $pageNode->name?->value ?? '',
                 'properties' => $this->crService->serializeNodeProperties($pageNode),
+                'references' => $this->crService->serializeNodeReferences($pageNode, $workspace),
             ]),
             'contentCollections' => $contentCollections,
             'contentNodes' => $contentNodes,
@@ -318,6 +319,7 @@ class McpBridgeController extends ActionController
             'title' => $node->getProperty('title') ?? $node->name?->value ?? '',
             'hidden' => $this->crService->isNodeHidden($node),
             'properties' => $this->crService->serializeNodeProperties($node),
+            'references' => $this->crService->serializeNodeReferences($node, $workspace),
         ]));
     }
 
@@ -618,28 +620,15 @@ class McpBridgeController extends ActionController
             $referenceKind = $nodeType !== null ? $this->crService->getReferenceKind($nodeType, $property) : null;
 
             // Handle reference types via SetNodeReferences command
-            if ($referenceKind === 'reference') {
-                $targetIds = $value !== '' ? [$value] : [];
+            if ($referenceKind !== null) {
+                $targetIds = $this->crService->resolveReferenceTargets($referenceKind, $property, $value, $workspace);
                 $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
                 $this->emitNodeMutated($node, "Property '{$property}' changed");
                 $this->view->assign('value', [
                     'success' => true,
                     'nodeAggregateId' => $nodeAggregateId,
                     'property' => $property,
-                    'newValue' => $value,
-                ]);
-                return;
-            }
-
-            if ($referenceKind === 'references') {
-                $targetIds = $this->crService->resolveReferenceIdentifiers($value, $workspace);
-                $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
-                $this->emitNodeMutated($node, "Property '{$property}' changed");
-                $this->view->assign('value', [
-                    'success' => true,
-                    'nodeAggregateId' => $nodeAggregateId,
-                    'property' => $property,
-                    'newValue' => $targetIds,
+                    'newValue' => $referenceKind === 'reference' ? ($targetIds[0] ?? null) : $targetIds,
                 ]);
                 return;
             }

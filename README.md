@@ -372,16 +372,18 @@ Every endpoint also accepts an optional `dimensions` parameter that selects the 
 | Property type | Accepted input | Resolved to |
 | --- | --- | --- |
 | Image / Asset | Asset UUID, or `{"__type":"asset","identifier":"<uuid>"}` | The `Asset`/`Image` entity |
-| `reference` | Node aggregate identifier (UUID) | Set via a `SetNodeReferences` command |
+| `reference` | Node aggregate identifier (UUID); an empty string clears it | Validated, set via a `SetNodeReferences` command |
 | `references` | JSON array, comma-separated string, or PHP array of node aggregate identifiers | Validated array, set via a `SetNodeReferences` command |
 | `DateTime` | Date string | `\DateTime` |
 | `array` | JSON string | PHP array |
 | `boolean` | `true`/`false`/`"1"`/`"yes"`/`"on"`/etc. | `bool` |
 | `Neos\Neos\Domain\Link\Link` | URI string (`node://<id>`, `asset://<id>`, `https://…`, `mailto:…`), or an object / JSON string with `href` and optional `title`, `target`, `rel`, `download`. An empty string or `null` clears the link. A `node://` target must exist in the workspace that is written to; other schemes are not checked | `Link` value object |
 
-References are recognised from the NodeType's `references` configuration (Neos 9 migrates legacy `type: reference(s)` properties into it; `maxItems: 1` means a single target). On create, reference/references properties are applied in a follow-up `SetNodeReferences` command right after the node is created, since they aren't part of `PropertyValuesToWrite`. If an asset or referenced node can't be found, a date string is invalid, a link object has no `href`, or a `node://` link target doesn't exist in the workspace, the call fails with a `500` and a structured `{"error": "..."}` body.
+References are recognised from the NodeType's `references` configuration (Neos 9 migrates legacy `type: reference(s)` properties into it; `maxItems: 1` means a single target). Every target must exist in the workspace that is written to, and a single `reference` accepts at most one identifier. On create, reference/references properties are applied in a follow-up `SetNodeReferences` command right after the node is created, since they aren't part of `PropertyValuesToWrite`. If an asset or referenced node can't be found, a date string is invalid, a link object has no `href`, or a `node://` link target doesn't exist in the workspace, the call fails with a `500` and a structured `{"error": "..."}` body.
 
 Reading a node returns a `Link` property as `{"href", "title", "target", "rel", "download"}`.
+
+Reading a node (`getPageContent`, `getDocumentProperties`, `listPages`) returns its references next to `properties` under `references`, in the format the write endpoints accept: every reference declared on the NodeType, a node aggregate identifier or `null` for `reference`, a list of identifiers for `references`. `listNodeTypes` and `getSiteContext` describe them per node type under `references` with `type` (`reference`/`references`), `label` and `targetNodeTypes` (the node types the inspector offers, from `ui.inspector.editorOptions.nodeTypes`).
 
 ### GET /neos/mcp/listSites
 
