@@ -606,13 +606,8 @@ class ContentRepositoryService
         foreach ($properties as $propertyName => $rawValue) {
             $referenceKind = $this->getReferenceKind($nodeType, $propertyName);
 
-            if ($referenceKind === 'reference') {
-                $referenceProperties[$propertyName] = $rawValue !== '' && $rawValue !== null ? [$rawValue] : [];
-                continue;
-            }
-
-            if ($referenceKind === 'references') {
-                $referenceProperties[$propertyName] = $this->resolveReferenceIdentifiers($rawValue, $workspace);
+            if ($referenceKind !== null) {
+                $referenceProperties[$propertyName] = $this->resolveReferenceTargets($referenceKind, $propertyName, $rawValue, $workspace);
                 continue;
             }
 
@@ -1100,19 +1095,30 @@ class ContentRepositoryService
     /**
      * Serialize node references for a given node.
      * In Neos 9, references are read via the subgraph, not from node properties.
+     *
+     * Every reference declared on the node type is listed, empty ones included, in the
+     * format the write endpoints accept: a single identifier (or null) for 'reference',
+     * a list of identifiers for 'references'.
      */
     public function serializeNodeReferences(Node $node, string $workspace = 'live'): array
     {
-        $subgraph = $this->getSubgraph($workspace);
-        $references = $subgraph->findReferences($node->aggregateId, FindReferencesFilter::create());
+        $nodeType = $this->getContentRepository()->getNodeTypeManager()->getNodeType($node->nodeTypeName);
+        if ($nodeType === null) {
+            return [];
+        }
+
+        $targets = [];
+        $references = $this->getSubgraph($workspace)->findReferences($node->aggregateId, FindReferencesFilter::create());
+        foreach ($references as $reference) {
+            $targets[$reference->name->value][] = $reference->node->aggregateId->value;
+        }
 
         $result = [];
-        foreach ($references as $reference) {
-            $refName = $reference->name->value;
-            if (!isset($result[$refName])) {
-                $result[$refName] = [];
-            }
-            $result[$refName][] = $reference->node->aggregateId->value;
+        foreach (array_keys($nodeType->getReferences()) as $referenceName) {
+            $ids = $targets[$referenceName] ?? [];
+            $result[$referenceName] = $this->getReferenceKind($nodeType, $referenceName) === 'reference'
+                ? ($ids[0] ?? null)
+                : $ids;
         }
 
         return $result;
@@ -1348,14 +1354,61 @@ class ContentRepositoryService
 
         $subgraph = $this->getSubgraph($workspace);
         $validated = [];
+        $missing = [];
         foreach ($identifiers as $identifier) {
-            $refNode = $subgraph->findNodeById(NodeAggregateId::fromString($identifier));
-            if ($refNode !== null) {
-                $validated[] = $identifier;
+            $identifier = trim((string)$identifier);
+            if ($identifier === '') {
+                continue;
             }
+            if ($subgraph->findNodeById(NodeAggregateId::fromString($identifier)) === null) {
+                $missing[] = $identifier;
+                continue;
+            }
+            $validated[] = $identifier;
+        }
+
+        if ($missing !== []) {
+            throw new \RuntimeException('Referenced node not found: ' . implode(', ', $missing), 1791540501);
         }
 
         return $validated;
+    }
+
+    /**
+     * Resolve the targets for a 'reference' or 'references' name; a single
+     * reference accepts at most one identifier, an empty value clears it.
+     *
+     * @return string[]
+     */
+    public function resolveReferenceTargets(string $referenceKind, string $referenceName, mixed $rawValue, string $workspace): array
+    {
+        $targetIds = $this->resolveReferenceIdentifiers($rawValue, $workspace);
+        if ($referenceKind === 'reference' && count($targetIds) > 1) {
+            throw new \RuntimeException("Reference '{$referenceName}' accepts a single node, got " . count($targetIds), 1791540502);
+        }
+
+        return $targetIds;
+    }
+
+    /**
+     * Describe the references declared on a node type: kind, label and the
+     * node types the inspector offers as targets.
+     */
+    public function describeReferences(NodeType $nodeType): array
+    {
+        $references = [];
+        foreach ($nodeType->getReferences() as $name => $config) {
+            if (str_starts_with($name, '_')) {
+                continue;
+            }
+            $references[$name] = [
+                'type' => $this->getReferenceKind($nodeType, $name),
+                'label' => $config['ui']['label'] ?? $name,
+                'targetNodeTypes' => $config['ui']['inspector']['editorOptions']['nodeTypes'] ?? null,
+            ];
+        }
+
+        return $references;
     }
 
     // -------------------------------------------------------------------------
@@ -1395,6 +1448,7 @@ class ContentRepositoryService
                 'isContent' => $nodeType->isOfType('Neos.Neos:Content'),
                 'isDocument' => $nodeType->isOfType('Neos.Neos:Document'),
                 'properties' => $properties,
+                'references' => $this->describeReferences($nodeType),
             ];
         }
 
@@ -1418,6 +1472,7 @@ class ContentRepositoryService
 
         if ($includeProperties) {
             $entry['properties'] = $this->serializeNodeProperties($node);
+            $entry['references'] = $this->serializeNodeReferences($node, $workspace);
         }
 
         $pages[] = $entry;
@@ -1485,6 +1540,7 @@ class ContentRepositoryService
 
             $nodes[] = array_merge($this->serializeNode($child, $subgraph), [
                 'properties' => $this->serializeNodeProperties($child),
+                'references' => $this->serializeNodeReferences($child, $workspace),
             ]);
 
             foreach ($this->collectContentNodes($child, $workspace) as $nested) {

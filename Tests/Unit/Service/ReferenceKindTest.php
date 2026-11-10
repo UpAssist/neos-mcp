@@ -32,7 +32,13 @@ class ReferenceKindTest extends UnitTestCase
                     'legacyMulti' => ['type' => 'references'],
                 ],
                 'references' => [
-                    'single' => ['constraints' => ['maxItems' => 1]],
+                    'single' => [
+                        'constraints' => ['maxItems' => 1],
+                        'ui' => [
+                            'label' => 'Contact',
+                            'inspector' => ['editorOptions' => ['nodeTypes' => ['Vendor.Site:Content.Person']]],
+                        ],
+                    ],
                     'multi' => [],
                     'limited' => ['constraints' => ['maxItems' => 3]],
                 ],
@@ -66,5 +72,24 @@ class ReferenceKindTest extends UnitTestCase
     {
         self::assertNull($this->service->getReferenceKind($this->nodeType, 'title'));
         self::assertNull($this->service->getReferenceKind($this->nodeType, 'doesNotExist'));
+    }
+
+    /**
+     * @test
+     */
+    public function referencesAreDescribedWithKindLabelAndTargetNodeTypes(): void
+    {
+        $references = $this->service->describeReferences($this->nodeType);
+
+        self::assertSame(
+            ['type' => 'reference', 'label' => 'Contact', 'targetNodeTypes' => ['Vendor.Site:Content.Person']],
+            $references['single']
+        );
+        self::assertSame(
+            ['type' => 'references', 'label' => 'multi', 'targetNodeTypes' => null],
+            $references['multi']
+        );
+        self::assertArrayHasKey('legacyMulti', $references);
+        self::assertArrayNotHasKey('title', $references);
     }
 }
