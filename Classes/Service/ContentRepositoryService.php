@@ -607,7 +607,7 @@ class ContentRepositoryService
             $referenceKind = $this->getReferenceKind($nodeType, $propertyName);
 
             if ($referenceKind !== null) {
-                $referenceProperties[$propertyName] = $this->resolveReferenceTargets($referenceKind, $propertyName, $rawValue, $workspace);
+                $referenceProperties[$propertyName] = $this->resolveReferenceTargets($nodeType, $propertyName, $rawValue, $workspace);
                 continue;
             }
 
@@ -1332,62 +1332,94 @@ class ContentRepositoryService
     }
 
     /**
-     * Resolve reference identifiers for 'reference' and 'references' property types.
-     * Accepts a JSON array string, a comma-separated string, or an already-decoded
-     * PHP array (create-path properties come from a decoded JSON body). Returns an
-     * array of validated node aggregate IDs.
+     * Parse the identifiers of a 'reference' or 'references' value. Accepts a JSON array
+     * string, a comma-separated string, or an already-decoded PHP array (create-path
+     * properties come from a decoded JSON body). An empty value yields no identifiers.
+     *
+     * @return string[]
      */
-    public function resolveReferenceIdentifiers(mixed $rawValue, string $workspace): array
+    public function parseReferenceIdentifiers(mixed $rawValue): array
     {
         if (is_string($rawValue)) {
             $decoded = json_decode($rawValue, true);
-            if (is_array($decoded)) {
-                $identifiers = $decoded;
-            } else {
-                $identifiers = array_filter(array_map('trim', explode(',', $rawValue)));
-            }
+            $identifiers = is_array($decoded) ? $decoded : explode(',', $rawValue);
         } elseif (is_array($rawValue)) {
             $identifiers = $rawValue;
         } else {
             $identifiers = [];
         }
 
-        $subgraph = $this->getSubgraph($workspace);
-        $validated = [];
+        return array_values(array_filter(
+            array_map(static fn (mixed $identifier): string => trim((string)$identifier), $identifiers),
+            static fn (string $identifier): bool => $identifier !== ''
+        ));
+    }
+
+    /**
+     * Resolve and validate the targets of a reference on the given node type. Every target
+     * must exist in the workspace and, if the reference declares targetNodeTypes, be of one
+     * of them; a single 'reference' accepts at most one target. An empty value clears it.
+     *
+     * @return string[]
+     */
+    public function resolveReferenceTargets(NodeType $nodeType, string $referenceName, mixed $rawValue, string $workspace): array
+    {
+        $targetIds = $this->parseReferenceIdentifiers($rawValue);
+        if ($this->getReferenceKind($nodeType, $referenceName) === 'reference' && count($targetIds) > 1) {
+            throw new \RuntimeException("Reference '{$referenceName}' accepts a single node, got " . count($targetIds), 1791540502);
+        }
+
+        $allowedNodeTypes = $this->describeReferences($nodeType)[$referenceName]['targetNodeTypes'] ?? null;
         $missing = [];
-        foreach ($identifiers as $identifier) {
-            $identifier = trim((string)$identifier);
-            if ($identifier === '') {
+        foreach ($targetIds as $targetId) {
+            $targetNodeType = $this->findReferenceTargetNodeType($targetId, $workspace);
+            if ($targetNodeType === null) {
+                $missing[] = $targetId;
                 continue;
             }
-            if ($subgraph->findNodeById(NodeAggregateId::fromString($identifier)) === null) {
-                $missing[] = $identifier;
-                continue;
+            if ($allowedNodeTypes !== null && !$this->isOfAnyType($targetNodeType, $allowedNodeTypes)) {
+                throw new \RuntimeException(sprintf(
+                    "Reference '%s' only accepts %s, but %s is a %s",
+                    $referenceName,
+                    implode(', ', $allowedNodeTypes),
+                    $targetId,
+                    $targetNodeType->name->value
+                ), 1791540503);
             }
-            $validated[] = $identifier;
         }
 
         if ($missing !== []) {
             throw new \RuntimeException('Referenced node not found: ' . implode(', ', $missing), 1791540501);
         }
 
-        return $validated;
+        return $targetIds;
     }
 
     /**
-     * Resolve the targets for a 'reference' or 'references' name; a single
-     * reference accepts at most one identifier, an empty value clears it.
-     *
-     * @return string[]
+     * The node type of a reference target in the workspace, null if the node doesn't exist.
      */
-    public function resolveReferenceTargets(string $referenceKind, string $referenceName, mixed $rawValue, string $workspace): array
+    protected function findReferenceTargetNodeType(string $nodeAggregateId, string $workspace): ?NodeType
     {
-        $targetIds = $this->resolveReferenceIdentifiers($rawValue, $workspace);
-        if ($referenceKind === 'reference' && count($targetIds) > 1) {
-            throw new \RuntimeException("Reference '{$referenceName}' accepts a single node, got " . count($targetIds), 1791540502);
+        $node = $this->getSubgraph($workspace)->findNodeById(NodeAggregateId::fromString($nodeAggregateId));
+        if ($node === null) {
+            return null;
         }
 
-        return $targetIds;
+        return $this->getContentRepository()->getNodeTypeManager()->getNodeType($node->nodeTypeName);
+    }
+
+    /**
+     * @param string[] $nodeTypeNames
+     */
+    private function isOfAnyType(NodeType $nodeType, array $nodeTypeNames): bool
+    {
+        foreach ($nodeTypeNames as $nodeTypeName) {
+            if ($nodeType->isOfType($nodeTypeName)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -621,7 +621,7 @@ class McpBridgeController extends ActionController
 
             // Handle reference types via SetNodeReferences command
             if ($referenceKind !== null) {
-                $targetIds = $this->crService->resolveReferenceTargets($referenceKind, $property, $value, $workspace);
+                $targetIds = $this->crService->resolveReferenceTargets($nodeType, $property, $value, $workspace);
                 $this->crService->setNodeReferences($workspace, $nodeAggregateId, $property, $targetIds);
                 $this->emitNodeMutated($node, "Property '{$property}' changed");
                 $this->view->assign('value', [
