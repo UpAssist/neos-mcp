@@ -40,6 +40,7 @@ class ReferenceKindTest extends UnitTestCase
                         ],
                     ],
                     'multi' => [],
+                    '_internal' => [],
                     'limited' => ['constraints' => ['maxItems' => 3]],
                 ],
             ]
@@ -91,5 +92,7 @@ class ReferenceKindTest extends UnitTestCase
         );
         self::assertArrayHasKey('legacyMulti', $references);
         self::assertArrayNotHasKey('title', $references);
+        // Internal references (underscore prefix) are neither described nor serialized.
+        self::assertArrayNotHasKey('_internal', $references);
     }
 }

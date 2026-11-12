@@ -1114,7 +1114,7 @@ class ContentRepositoryService
         }
 
         $result = [];
-        foreach (array_keys($nodeType->getReferences()) as $referenceName) {
+        foreach (array_keys($this->describeReferences($nodeType)) as $referenceName) {
             $ids = $targets[$referenceName] ?? [];
             $result[$referenceName] = $this->getReferenceKind($nodeType, $referenceName) === 'reference'
                 ? ($ids[0] ?? null)
