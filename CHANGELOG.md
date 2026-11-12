@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.5.0](https://github.com/UpAssist/neos-mcp/compare/2.4.0...2.5.0) (2026-11-12)
+
+
+### Features
+
+* expose references when reading nodes and node types ([162968a](https://github.com/UpAssist/neos-mcp/commit/162968a2f44d4436c65ec17235fcac9bc79fc598))
+* validate reference targets against targetNodeTypes ([c5351fc](https://github.com/UpAssist/neos-mcp/commit/c5351fc8ad64855dc6b5caaaef8eac027b4494d1))
+
+
+### Bug Fixes
+
+* serialize only the references that are described ([9af2cfc](https://github.com/UpAssist/neos-mcp/commit/9af2cfc002ec1b332276f53c923c7349647a969d))
+
 ## [2.4.0](https://github.com/UpAssist/neos-mcp/compare/2.3.0...2.4.0) (2026-11-02)
 
 
