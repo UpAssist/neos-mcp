@@ -34,20 +34,20 @@ class SiteSelectionTest extends UnitTestCase
 
     private Site $mainSite;
 
-    private Site $azubiSite;
+    private Site $secondSite;
 
     protected function setUp(): void
     {
-        $this->mainSite = $this->createSite('site', 'Mode Jost', ['localhost', 'modejost.example.org']);
-        $this->azubiSite = $this->createSite('azubi', 'Azubi', ['azubi.localhost']);
+        $this->mainSite = $this->createSite('site', 'Main Site', ['localhost', 'main.example.org']);
+        $this->secondSite = $this->createSite('blog', 'Blog', ['blog.localhost']);
 
         $siteRepository = $this->createMock(SiteRepository::class);
-        $siteRepository->method('findDefault')->willReturn($this->azubiSite);
-        $siteRepository->method('findAll')->willReturn($this->queryResult([$this->azubiSite, $this->mainSite]));
+        $siteRepository->method('findDefault')->willReturn($this->secondSite);
+        $siteRepository->method('findAll')->willReturn($this->queryResult([$this->secondSite, $this->mainSite]));
         $siteRepository->method('findOneByNodeName')->willReturnCallback(
             fn (string $nodeName): ?Site => match ($nodeName) {
                 'site' => $this->mainSite,
-                'azubi' => $this->azubiSite,
+                'blog' => $this->secondSite,
                 default => null,
             }
         );
@@ -107,7 +107,7 @@ class SiteSelectionTest extends UnitTestCase
     public function withoutSelectionTheDefaultSiteIsUsed(): void
     {
         self::assertFalse($this->service->hasSelectedSite());
-        self::assertSame($this->azubiSite, $this->service->getCurrentSite());
+        self::assertSame($this->secondSite, $this->service->getCurrentSite());
     }
 
     /**
@@ -129,9 +129,9 @@ class SiteSelectionTest extends UnitTestCase
     {
         $this->service->selectSite('site');
 
-        self::assertSame($this->azubiSite, $this->service->selectSite(''));
+        self::assertSame($this->secondSite, $this->service->selectSite(''));
         self::assertFalse($this->service->hasSelectedSite());
-        self::assertSame($this->azubiSite, $this->service->getCurrentSite());
+        self::assertSame($this->secondSite, $this->service->getCurrentSite());
 
         $this->service->selectSite('site');
         $this->service->selectSite(null);
@@ -156,14 +156,14 @@ class SiteSelectionTest extends UnitTestCase
     {
         $sites = $this->service->listSites();
 
-        self::assertSame(['azubi', 'site'], array_column($sites, 'nodeName'));
+        self::assertSame(['blog', 'site'], array_column($sites, 'nodeName'));
         self::assertSame([true, false], array_column($sites, 'default'));
 
         $main = $sites[1];
-        self::assertSame('Mode Jost', $main['name']);
+        self::assertSame('Main Site', $main['name']);
         self::assertTrue($main['online']);
         self::assertSame('localhost', $main['primaryDomain']);
-        self::assertSame(['localhost', 'modejost.example.org'], array_column($main['domains'], 'domain'));
+        self::assertSame(['localhost', 'main.example.org'], array_column($main['domains'], 'domain'));
         self::assertSame('default', $main['contentRepositoryId']);
         self::assertSame(['language' => 'de'], $main['defaultDimensionSpacePoint']);
     }
@@ -193,11 +193,11 @@ class SiteSelectionTest extends UnitTestCase
     public function baseUriUsesTheSiteHostAndKeepsRequestSchemeAndPort(): void
     {
         $uri = $this->service->buildSiteBaseUri(
-            $this->domain('azubi.localhost'),
+            $this->domain('blog.localhost'),
             new Uri('http://localhost:8080/neos/mcp/getPreviewUrl')
         );
 
-        self::assertSame('http://azubi.localhost:8080', (string)$uri);
+        self::assertSame('http://blog.localhost:8080', (string)$uri);
     }
 
     /**

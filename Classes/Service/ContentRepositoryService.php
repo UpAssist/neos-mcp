@@ -270,7 +270,7 @@ class ContentRepositoryService
      * Base URI (scheme, host, port) for frontend links of a site: its primary domain,
      * falling back to $requestUri when the site has no active domain. Scheme and port
      * that the domain does not define are taken from $requestUri, so a domain
-     * "azubi.localhost" requested via "http://localhost:8080" becomes "http://azubi.localhost:8080".
+     * "blog.localhost" requested via "http://localhost:8080" becomes "http://blog.localhost:8080".
      * A domain with its own scheme but no port uses the default port of that scheme.
      */
     public function buildSiteBaseUri(?Domain $domain, UriInterface $requestUri): UriInterface

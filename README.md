@@ -196,7 +196,7 @@ Once connected, the AI assistant has access to these capabilities:
 A Neos instance can host several sites. The bridge works on the **default site** unless a request names another one:
 
 - `listSites` (tool `neos_list_sites`) returns all sites with name, node name, online state, primary domain and domains, content repository and default dimension space point, and marks the default site.
-- Every endpoint accepts an optional `site` parameter with a site **node name** (e.g. `site=azubi`). It selects the site for the site-scoped parts of the request: site context, page tree, content repository and default dimension space point, pending changes and publishing. An unknown site returns `404`.
+- Every endpoint accepts an optional `site` parameter with a site **node name** (e.g. `site=blog`). It selects the site for the site-scoped parts of the request: site context, page tree, content repository and default dimension space point, pending changes and publishing. An unknown site returns `404`.
 - `getSiteContext` lists the available sites in `sites` and tells the assistant to pass `site` when the instance has more than one.
 - Operations by node id (`getPageContent`, `updateNodeProperty`, `createContentNode`, `moveNode`, …) work on any site of the content repository; `site` is only needed there when sites use **different content repositories or default dimensions**.
 - `getPreviewUrl` builds the link on the primary domain of the page's own site, not on the host the bridge was called with. Scheme and port the domain doesn't define are taken from the bridge request (`second.localhost` called via `http://localhost:8080` becomes `http://second.localhost:8080`).
