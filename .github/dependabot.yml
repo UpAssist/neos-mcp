@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # The package has no PHP dependencies besides Neos and Flow, and the root
+  # package.json only holds the standard-version release scripts. Composer
+  # updates show when a new Neos/Flow major needs a wider constraint.
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      composer-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: composer
+    directory: /
+    target-branch: 1.x
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      composer-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: 1.x
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]

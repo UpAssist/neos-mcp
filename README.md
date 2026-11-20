@@ -85,14 +85,20 @@ Start your Neos instance, open Claude Code (or Cursor), and ask:
 
 The AI will call `neos_get_site_context` and show you the site structure. From there you can ask it to edit content, create pages, upload images, and more — all staged for your review.
 
+## Version compatibility
+
+| Package version | Branch | Neos CMS | Flow | PHP | Tested on |
+| --------------- | ------ | -------- | ---- | --- | --------- |
+| `^2.0` | `main` | `^9.0` | `^9.0` | 8.2+ | Neos 9.0, 9.1, 9.2 |
+| `^1.3` | `1.x` | `^8.3` | `^8.3` | 8.1+ | Neos 8.3, 8.4 |
+
+The Neos 8 line (`1.x`, formerly the `neos-8` branch) gets bug fixes; new features land on `main` first. The MCP server ([`@upassist/neos-mcp`](https://github.com/UpAssist/neos-mcp-client), 2.x) works with both lines and needs Node.js 18+.
+
 ## Requirements
 
-| Version | Neos CMS | PHP | Branch |
-|---------|----------|-----|--------|
-| v2.x | 9.0+ | 8.2+ | `main` (this branch) |
-| v1.x | 8.3 | 8.1+ | `neos-8` |
-
-Node.js 18+ is required for the MCP server in both versions.
+- Neos CMS 9.x (use `^1.3` for Neos 8.3 and 8.4)
+- PHP 8.2+
+- Node.js 18+ (for the MCP server)
 
 ## Configuration
 
@@ -545,7 +551,7 @@ All at `/neos/mcp/entity/`, using Bearer token auth:
 
 ## Testing
 
-The functional tests exercise the HTTP endpoints through the real stack (routing, token authentication, persistence), so the same tests run on the Neos 9 (`main`) and Neos 8 (`neos-8`) branch. Run them from a Neos distribution that has this package installed and `phpunit` available:
+The functional tests exercise the HTTP endpoints through the real stack (routing, token authentication, persistence), so the same tests run on the Neos 9 (`main`) and Neos 8 (`1.x`) branch. Run them from a Neos distribution that has this package installed and `phpunit` available:
 
 ```bash
 FLOW_CONTEXT=Testing bin/phpunit \
