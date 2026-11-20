@@ -1,0 +1,18 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, 1.x]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer
+          coverage: none
+      - run: composer validate --no-check-publish --strict
+      - name: PHP lint
+        run: find Classes Tests -name '*.php' -print0 | xargs -0 -n1 php -l
