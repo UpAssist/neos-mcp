@@ -22,6 +22,10 @@ class LinkPropertyResolutionTest extends UnitTestCase
 
     protected function setUp(): void
     {
+        if (!class_exists(Link::class)) {
+            // The Link value object exists since Neos 9.1; on 9.0 no property can have this type.
+            self::markTestSkipped('Neos\Neos\Domain\Link\Link needs Neos 9.1 or newer');
+        }
         $this->service = new ContentRepositoryService();
         $this->nodeType = new NodeType(
             NodeTypeName::fromString('Vendor.Site:Content.Teaser'),
