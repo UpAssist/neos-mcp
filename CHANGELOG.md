@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.3.1](https://github.com/UpAssist/neos-mcp/compare/1.3.0...1.3.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* check node type constraints when creating and moving nodes (neos-8) ([#12](https://github.com/UpAssist/neos-mcp/issues/12)) ([706a98d](https://github.com/UpAssist/neos-mcp/commit/706a98dd8defda762540a454781034445038c442))
+* check the dimensions of the sibling in createDocumentNode ([f4aaa0d](https://github.com/UpAssist/neos-mcp/commit/f4aaa0df0e5d2a16d3f9dea188b6c565f761260d))
+* require neos/neos and neos/flow ^8.3 instead of * ([75e1f05](https://github.com/UpAssist/neos-mcp/commit/75e1f05600cbb234a9aed313268eafa3a2e745f9))
+
 ## [1.3.0](https://github.com/UpAssist/neos-mcp/compare/1.2.0...1.3.0) (2026-11-02)
 
 
