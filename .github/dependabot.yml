@@ -2,15 +2,9 @@ version: 2
 updates:
   # The package has no PHP dependencies besides Neos and Flow, and the root
   # package.json only holds the standard-version release scripts. Composer
-  # updates show when a new Neos/Flow major needs a wider constraint.
-  - package-ecosystem: composer
-    directory: /
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 5
-    groups:
-      composer-minor-patch:
-        update-types: [minor, patch]
+  # updates only run for 1.x: on main, neos/neos ^9.0 can't be resolved on its
+  # own (it needs a neos/contentrepositoryregistry-storageclient, which a
+  # distribution provides), so Dependabot's composer job always fails there.
   - package-ecosystem: github-actions
     directory: /
     schedule:
