@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.3.2](https://github.com/UpAssist/neos-mcp/compare/1.3.1...1.3.2) (2026-11-23)
+
+
+### Bug Fixes
+
+* accept node identifiers and context paths in every node argument; `get_page_content` with a node identifier gave a 500, `create_content_node` refused the context path from `list_pages` ([918d878](https://github.com/UpAssist/neos-mcp/commit/918d878))
+* flush the content cache when publishing through the bridge, by using the Neos PublishingService like `./flow workspace:publish` ([918d878](https://github.com/UpAssist/neos-mcp/commit/918d878))
+
 ### [1.3.1](https://github.com/UpAssist/neos-mcp/compare/1.3.0...1.3.1) (2026-11-20)
 
 
