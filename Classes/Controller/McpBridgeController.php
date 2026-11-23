@@ -11,12 +11,12 @@ use Neos\ContentRepository\Domain\Repository\WorkspaceRepository;
 use Neos\ContentRepository\Domain\Service\ContentDimensionPresetSourceInterface;
 use Neos\ContentRepository\Domain\Service\ContextFactoryInterface;
 use Neos\ContentRepository\Domain\Service\NodeTypeManager;
-use Neos\ContentRepository\Domain\Service\PublishingService;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Mvc\Controller\ActionController;
 use Neos\Flow\Mvc\View\JsonView;
 use Neos\Flow\Persistence\PersistenceManagerInterface;
 use Neos\Neos\Domain\Repository\SiteRepository;
+use Neos\Neos\Service\PublishingService;
 use Neos\Flow\ResourceManagement\ResourceManager;
 use Neos\Media\Domain\Model\Asset;
 use Neos\Media\Domain\Model\Tag;
@@ -363,6 +363,28 @@ class McpBridgeController extends ActionController
     }
 
     /**
+     * Finds a node by node path (/sites/x/page), context path (/sites/x/page@mcp;language=nl,
+     * as list_pages returns it) or node identifier. The node is looked up in the given context;
+     * the workspace and dimensions of a context path are ignored. Returns null when nothing matches,
+     * also for a reference that is not a valid path.
+     */
+    private function findNode(\Neos\ContentRepository\Domain\Service\Context $context, string $reference): ?NodeInterface
+    {
+        $reference = trim((string) preg_replace('/@.*$/', '', $reference));
+        if ($reference === '') {
+            return null;
+        }
+        try {
+            if ($reference[0] !== '/') {
+                return $context->getNodeByIdentifier($reference);
+            }
+            return $context->getNode($reference);
+        } catch (\InvalidArgumentException $e) {
+            return null;
+        }
+    }
+
+    /**
      * Dimension values the node is actually stored in (dimension => first value) and whether
      * the node is only visible here through a dimension fallback.
      *
@@ -697,10 +719,9 @@ class McpBridgeController extends ActionController
         if ($nodePath === '') {
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
         }
-        // Accept a context path (/sites/x@mcp;language=nl) as well; the context comes from workspace and dimensions.
-        $nodePath = preg_replace('/@.*$/', '', $nodePath);
+        // Accepts a node path, a context path or a node identifier; the context comes from workspace and dimensions.
         $context = $this->createContext($workspace);
-        $pageNode = $context->getNode($nodePath);
+        $pageNode = $this->findNode($context, $nodePath);
         if ($pageNode === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
@@ -729,9 +750,8 @@ class McpBridgeController extends ActionController
         if ($nodePath === '') {
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
         }
-        $nodePath = preg_replace('/@.*$/', '', $nodePath);
         $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+        $node = $this->findNode($context, $nodePath);
         if ($node === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
         }
@@ -820,7 +840,12 @@ class McpBridgeController extends ActionController
         if ($nodePath === '') {
             $this->throwStatus(400, 'Bad Request', json_encode(['error' => 'nodePath is required']));
         }
-        $nodePath = preg_replace('/@.*$/', '', $nodePath);
+        $context = $this->createContext($workspace);
+        $node = $this->findNode($context, $nodePath);
+        if ($node === null) {
+            $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
+        }
+        $nodePath = $node->getPath();
 
         $token = bin2hex(random_bytes(32));
         $expiresAt = (new \DateTimeImmutable())->modify('+24 hours');
@@ -840,8 +865,6 @@ class McpBridgeController extends ActionController
         ), '/');
 
         // Build the frontend URL using uriPathSegment properties (not node names)
-        $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
         $siteNodePath = $site !== null ? '/sites/' . $site->getNodeName() : $this->getSiteNodePath();
         $segments = [];
         $current = $node;
@@ -886,7 +909,7 @@ class McpBridgeController extends ActionController
 
         $this->ensureMcpWorkspace();
         $context = $this->createContext($workspace);
-        $parentNode = $context->getNode($parentPath);
+        $parentNode = $this->findNode($context, $parentPath);
 
         if ($parentNode === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentPath]));
@@ -938,7 +961,7 @@ class McpBridgeController extends ActionController
 
         $this->ensureMcpWorkspace();
         $context = $this->createContext($workspace);
-        $parentNode = $context->getNode($parentPath);
+        $parentNode = $this->findNode($context, $parentPath);
 
         if ($parentNode === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Parent node not found: ' . $parentPath]));
@@ -950,7 +973,7 @@ class McpBridgeController extends ActionController
         if ($insertBefore !== '' || $insertAfter !== '') {
             $siblingParameter = $insertBefore !== '' ? 'insertBefore' : 'insertAfter';
             $siblingContextPath = $insertBefore !== '' ? $insertBefore : $insertAfter;
-            $sibling = $context->getNode(preg_replace('/@.*$/', '', $siblingContextPath));
+            $sibling = $this->findNode($context, $siblingContextPath);
             if ($sibling === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => $siblingParameter . ' node not found: ' . $siblingContextPath]));
             }
@@ -1020,7 +1043,7 @@ class McpBridgeController extends ActionController
         $this->ensureMcpWorkspace();
         $nodePath = preg_replace('/@.*$/', '', $contextPath);
         $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+        $node = $this->findNode($context, $contextPath);
 
         if ($node === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
@@ -1028,8 +1051,7 @@ class McpBridgeController extends ActionController
         $this->requireNodeInRequestedDimensions($node);
 
         if ($insertBefore !== '') {
-            $refPath = preg_replace('/@.*$/', '', $insertBefore);
-            $ref = $context->getNode($refPath);
+            $ref = $this->findNode($context, $insertBefore);
             if ($ref === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertBefore node not found: ' . $insertBefore]));
             }
@@ -1037,8 +1059,7 @@ class McpBridgeController extends ActionController
             $this->requireNodeTypeAllowedInNewParent($node, $ref->getParent());
             $node->moveBefore($ref);
         } elseif ($insertAfter !== '') {
-            $refPath = preg_replace('/@.*$/', '', $insertAfter);
-            $ref = $context->getNode($refPath);
+            $ref = $this->findNode($context, $insertAfter);
             if ($ref === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'insertAfter node not found: ' . $insertAfter]));
             }
@@ -1046,7 +1067,7 @@ class McpBridgeController extends ActionController
             $this->requireNodeTypeAllowedInNewParent($node, $ref->getParent());
             $node->moveAfter($ref);
         } else {
-            $ref = $context->getNode($newParentPath);
+            $ref = $this->findNode($context, $newParentPath);
             if ($ref === null) {
                 $this->throwStatus(404, 'Not Found', json_encode(['error' => 'newParentPath node not found: ' . $newParentPath]));
             }
@@ -1080,7 +1101,7 @@ class McpBridgeController extends ActionController
         // Extract node path from context path (strip @workspace)
         $nodePath = preg_replace('/@.*$/', '', $contextPath);
         $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+        $node = $this->findNode($context, $contextPath);
 
         if ($node === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
@@ -1130,7 +1151,7 @@ class McpBridgeController extends ActionController
         $this->ensureMcpWorkspace();
         $nodePath = preg_replace('/@.*$/', '', $contextPath);
         $context = $this->createContext($workspace);
-        $node = $context->getNode($nodePath);
+        $node = $this->findNode($context, $contextPath);
 
         if ($node === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => 'Node not found: ' . $nodePath]));
@@ -1177,10 +1198,11 @@ class McpBridgeController extends ActionController
         $this->ensureMcpWorkspace();
         $nodePath = preg_replace('/@.*$/', '', $contextPath);
 
-        $sourceNode = $this->createContextForDimensions($workspace, $source)->getNode($nodePath);
+        $sourceNode = $this->findNode($this->createContextForDimensions($workspace, $source), $contextPath);
         if ($sourceNode === null) {
             $this->throwStatus(404, 'Not Found', json_encode(['error' => sprintf('Node %s not found in %s', $nodePath, json_encode($source))]));
         }
+        $nodePath = $sourceNode->getPath();
 
         $targetContext = $this->createContext($workspace);
         $existing = $targetContext->getNode($nodePath);
